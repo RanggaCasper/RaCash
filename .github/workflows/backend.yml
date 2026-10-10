@@ -1,0 +1,55 @@
+name: backend
+
+on:
+  push:
+    branches: [main]
+    paths: ['topup-backend/**', '.github/workflows/backend.yml']
+  pull_request:
+    paths: ['topup-backend/**', '.github/workflows/backend.yml']
+
+defaults:
+  run:
+    working-directory: topup-backend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: racash
+          POSTGRES_PASSWORD: racash
+          POSTGRES_DB: racash
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U racash"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: racash
+      DB_PASSWORD: racash
+      DB_NAME: racash
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: 5432
+      TEST_DB_USER: racash
+      TEST_DB_PASSWORD: racash
+      TEST_DB_NAME: racash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: topup-backend/go.mod
+          cache-dependency-path: topup-backend/go.sum
+      - name: go mod tidy bersih
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+      - run: go vet ./...
+      - run: go build ./...
+      - name: Migrasi up → down → up
+        run: |
+          go run ./cmd/migrate up
+          go run ./cmd/migrate down 1
+          go run ./cmd/migrate up
+      - name: Test (unit, arsitektur, integration)
+        run: go test -count=1 -race ./...

@@ -4,9 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-RaCash is a top-up website for digital products (game currency, vouchers, pulsa, data, PLN, e-wallet) that is multi-provider and multi-payment-gateway. The repository is still **spec-only**: everything lives in `docs/`, there is no application code yet, and there are no build, lint, or test commands. All docs are written in Indonesian; keep edits in Indonesian.
+RaCash is a top-up website for digital products (game currency, vouchers, pulsa, data, PLN, e-wallet) that is multi-provider and multi-payment-gateway. Specs live in `docs/` and are written in Indonesian; keep doc edits in Indonesian. Work is tracked as GitHub issues grouped by milestone M0–M4 (PRD §11).
 
-The planned code layout (`topup-backend/` in Go, `topup-frontend/` in Nuxt 4.6.0) is described in `docs/ARCHITECTURE.md` §2.3 and §3.2. Follow it when scaffolding begins.
+- `topup-backend/` (Go 1.25, Fiber v2, GORM, Redis, Asynq): the platform kernel and app wiring exist, but no domain modules yet. Its README covers setup and module conventions.
+- `topup-frontend/` (Nuxt 4.6.0): not started. The planned layout is in ARCHITECTURE §3.2.
+
+## Commands (run in `topup-backend/`)
+
+```bash
+go build ./... && go vet ./...
+go test ./...                                          # unit + architecture check
+go test -run TestPercentOf ./internal/platform/money   # single test
+go test ./test/arch/...                                # module-boundary rules only
+TEST_DB_HOST=... TEST_DB_USER=... TEST_DB_NAME=... go test -count=1 ./test/integration/...  # migrated Postgres; skipped without TEST_DB_NAME
+go run ./cmd/migrate up | down N | version | force V | create <modul>_<deskripsi>
+make keygen | make keygen-rotate ID=k2   # generate ENCRYPTION_KEYS (rotation keeps old keys)
+go run ./cmd/api      # :8080 public, :9090 /metrics (internal only)
+go run ./cmd/worker   # Asynq server + scheduler + outbox relay
+```
+
+The API and worker need these variables (see `.env.example`):
+- Database: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`. These are separate variables, not a single URL; `config.Database.URL()` builds the escaped DSN.
+- `REDIS_URL`, `ENCRYPTION_KEYS`, and `ENCRYPTION_ACTIVE_KEY_ID`.
+
+Integration tests read the same fields with a `TEST_` prefix.
+
+In `APP_ENV=local`, `migrate up`, the API, and the worker create `DB_NAME` if it is missing (`database.EnsureExists`, which goes through `DB_MAINTENANCE_NAME`). Elsewhere this only happens with `DB_AUTO_CREATE=true`. CI is `.github/workflows/backend.yml`: tidy check, vet, migrate up/down/up, and `go test -race` against Postgres 17.
 
 ## Documents and how they relate
 
@@ -41,7 +64,7 @@ Each doc has a version in its header, and the docs cite each other's versions. W
 - **WhatsApp:** sent through the third-party gateway Kirimdev, behind a notification adapter. It is used for customer notifications, OTP, and admin alerts. There is no Telegram and no Baileys.
 - **Money and time:** money is an integer number of rupiah (`bigint`). Time is stored as `timestamptz` in UTC and displayed in WIB. IDs are UUID v7. Invoice numbers use the format `RC-YYYYMMDD-XXXXXX`.
 
-## Backend architecture rules (for when code exists)
+## Backend architecture rules
 
 - **GORM is mandatory** for all data access (ARCHITECTURE §2.7):
   - No `database/sql`, `sqlx`, or `pgx` in module code.
@@ -55,3 +78,11 @@ Each doc has a version in its header, and the docs cite each other's versions. W
 - **Vendors:** every provider/PG is an adapter behind an interface (§2.8), plus a `fake` adapter for local runs and E2E tests.
 - **Webhooks:** stored in `webhook_events`, which is unique per `source + event_id`. Signatures are verified by the adapter. State changes and the outbox write happen in one transaction.
 - **`balance_ledger` is append-only.** `users.balance` is updated in the same transaction with `SELECT ... FOR UPDATE`.
+
+## Platform gotchas (`topup-backend/internal/platform`)
+
+- **Adding a module:** add it to `Allowed` in `test/arch/rules.go` and to ARCHITECTURE §2.4, or the architecture test fails. Register it in `internal/app/bootstrap.go` in dependency order.
+- **Transactions:** repositories take `uow.DBProvider` and call `DB(ctx)`. Services wrap a use case in `uow.Tx.Do`. `event.Outbox.Publish` returns `ErrNotInTx` outside a transaction, by design.
+- **Errors:** handlers return `*errs.Error`, and any other error is rendered as `INTERNAL_ERROR` with the message hidden. `httpx.AccessLog` renders errors itself so that metrics see the final status. Keep the middleware order in `internal/app/http.go`: request id → metrics → access log → recover.
+- **Idempotency:** `idempotency_keys.response_body` stores the body as a JSON *string* inside `jsonb`. `jsonb` reorders keys, and replays must be byte-identical. Only responses below 400 are stored; errors release the key.
+- **Event delivery:** the outbox relay enqueues one Asynq task per subscriber (`event:<type>:<subscriber>`) with TaskID `<event_id>:<subscriber>` for dedupe.

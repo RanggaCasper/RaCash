@@ -1,7 +1,7 @@
 // ============================================================================
 // RaCash — Database Schema (PostgreSQL)
 // Versi   : 0.2 (Draft) — 10 Oktober 2026
-// Terkait : PRD.md v0.5, ARCHITECTURE.md v0.2, API_CONTRACT.md v0.3
+// Terkait : PRD.md v0.5, ARCHITECTURE.md v0.3, API_CONTRACT.md v0.4
 //
 // Konvensi:
 // - PK uuid (v7, dibuat di aplikasi). Tabel pivot memakai PK gabungan.
