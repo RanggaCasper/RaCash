@@ -1,0 +1,4548 @@
+openapi: 3.1.0
+info:
+  title: RaCash API
+  version: 0.3.0
+  summary: Website top-up multi provider & multi payment gateway
+  description: |
+    Dihasilkan dari `API_CONTRACT.md` v0.3. Bila berbeda, `API_CONTRACT.md` yang berlaku
+    dan file ini wajib diperbarui.
+
+    Konvensi:
+    - Semua respons JSON memakai envelope `{ success, data, meta?, request_id }` (kecuali webhook & export file).
+    - Field `snake_case`; uang `integer` rupiah; waktu RFC 3339 UTC; ID UUID v7.
+    - Ekstensi vendor:
+      - `x-permission`: permission RBAC yang wajib dimiliki.
+      - `x-sensitive: true`: butuh header `X-Step-Up-Token` (★).
+      - `x-idempotent: true`: wajib header `Idempotency-Key` (🔁).
+servers:
+  - url: https://api.{domain}
+    variables:
+      domain:
+        default: racash.id
+tags:
+  - name: Public
+  - name: Auth
+  - name: Member
+  - name: Reseller
+  - name: H2H
+  - name: Webhook
+  - name: Admin Dashboard
+  - name: Admin Catalog
+  - name: Admin Media
+  - name: Admin Pricing
+  - name: Admin Provider
+  - name: Admin Payment
+  - name: Admin Order
+  - name: Admin User
+  - name: Admin RBAC
+  - name: Admin Audit & Settings
+  - name: System
+
+paths:
+  # ==========================================================================
+  # PUBLIK
+  # ==========================================================================
+  /api/v1/categories:
+    get:
+      tags: [Public]
+      operationId: listCategories
+      summary: Daftar kategori aktif
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Category' } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/v1/brands:
+    get:
+      tags: [Public]
+      operationId: listBrands
+      summary: Daftar brand
+      parameters:
+        - { name: category, in: query, schema: { type: string }, description: Slug kategori }
+        - $ref: '#/components/parameters/Q'
+        - { name: popular, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/BrandSummary' } }
+
+  /api/v1/brands/{slug}:
+    get:
+      tags: [Public]
+      operationId: getBrand
+      summary: Detail brand + skema form input
+      parameters: [ { $ref: '#/components/parameters/Slug' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BrandDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/brands/{slug}/products:
+    get:
+      tags: [Public]
+      operationId: listBrandProducts
+      summary: Produk aktif + harga sesuai tier pemanggil (guest bila tanpa token)
+      security: [ {}, { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Slug' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/PublicProduct' } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/accounts/check:
+    post:
+      tags: [Public]
+      operationId: checkAccount
+      summary: Cek nickname akun game
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountCheckRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [nickname]
+                        properties:
+                          nickname: { type: string, example: Pl***er01 }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '502': { $ref: '#/components/responses/UpstreamError' }
+
+  /api/v1/payment-methods:
+    get:
+      tags: [Public]
+      operationId: listPaymentMethods
+      summary: Metode bayar yang tersedia untuk nominal tertentu
+      security: [ {}, { bearerAuth: [] } ]
+      parameters:
+        - { name: amount, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/PublicPaymentMethod' } }
+
+  /api/v1/orders/quote:
+    post:
+      tags: [Public]
+      operationId: quoteOrder
+      summary: Hitung total tanpa membuat order; quote_token mengunci harga 10 menit
+      security: [ {}, { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuoteRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Quote' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/v1/orders:
+    post:
+      tags: [Public]
+      operationId: createOrder
+      summary: Checkout / buat invoice
+      description: |
+        - `contact.email` atau `contact.whatsapp` wajib minimal satu untuk guest.
+        - `payment_method = BALANCE` hanya untuk user login; order langsung `PAID`.
+        - `payment.expires_at` = waktu buat + `expiry_minutes` metode bayar; PG menolak pembayaran setelahnya.
+      x-idempotent: true
+      security: [ {}, { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CaptchaToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOrderRequest' }
+      responses:
+        '201':
+          description: Invoice dibuat
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CheckoutOrder' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '502': { $ref: '#/components/responses/UpstreamError' }
+
+  /api/v1/orders/{invoice_no}:
+    get:
+      tags: [Public]
+      operationId: trackOrder
+      summary: Lacak status order (data pribadi tersamar)
+      parameters:
+        - $ref: '#/components/parameters/InvoiceNo'
+        - name: contact
+          in: query
+          description: Email/no WA saat checkout; bila cocok, `delivery.serial_number` tidak disamarkan
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PublicOrder' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/banners:
+    get:
+      tags: [Public]
+      operationId: listBanners
+      summary: Banner beranda
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Banner' } }
+
+  # ==========================================================================
+  # AUTH
+  # ==========================================================================
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      parameters: [ { $ref: '#/components/parameters/CaptchaToken' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Terdaftar, menunggu verifikasi email
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [user_id, status]
+                        properties:
+                          user_id: { $ref: '#/components/schemas/Id' }
+                          status: { $ref: '#/components/schemas/UserStatus' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/v1/auth/verify-email:
+    post:
+      tags: [Auth]
+      operationId: verifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/v1/auth/resend-verification:
+    post:
+      tags: [Auth]
+      operationId: resendVerification
+      parameters: [ { $ref: '#/components/parameters/CaptchaToken' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      description: |
+        - `403 EMAIL_NOT_VERIFIED` bila email belum diverifikasi.
+        - `two_factor_required: true` → lanjut ke `/auth/login/2fa`.
+        - `two_factor_setup_required: true` → user internal belum mengaktifkan 2FA; token hanya bisa mengakses `/auth/2fa/*`.
+      parameters: [ { $ref: '#/components/parameters/CaptchaToken' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LoginResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/v1/auth/login/2fa:
+    post:
+      tags: [Auth]
+      operationId: login2fa
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_token, code]
+              properties:
+                challenge_token: { type: string }
+                code: { type: string, description: Kode TOTP 6 digit atau recovery code }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LoginResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      description: Refresh token dirotasi; pemakaian ulang token lama mencabut seluruh sesi terkait.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LoginResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /api/v1/auth/logout-all:
+    post:
+      tags: [Auth]
+      operationId: logoutAll
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /api/v1/auth/forgot-password:
+    post:
+      tags: [Auth]
+      operationId: forgotPassword
+      parameters: [ { $ref: '#/components/parameters/CaptchaToken' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/v1/auth/reset-password:
+    post:
+      tags: [Auth]
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token: { type: string }
+                new_password: { $ref: '#/components/schemas/Password' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/v1/auth/2fa/setup:
+    post:
+      tags: [Auth]
+      operationId: setup2fa
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: Secret TOTP dibuat (belum aktif)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [otpauth_url]
+                        properties:
+                          otpauth_url: { type: string }
+                          secret: { type: string, description: Untuk input manual }
+
+  /api/v1/auth/2fa/enable:
+    post:
+      tags: [Auth]
+      operationId: enable2fa
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TotpCode' }
+      responses:
+        '200':
+          description: 2FA aktif; recovery codes hanya ditampilkan sekali
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [recovery_codes]
+                        properties:
+                          recovery_codes: { type: array, items: { type: string } }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/v1/auth/2fa/disable:
+    post:
+      tags: [Auth]
+      operationId: disable2fa
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/StepUpToken' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/auth/step-up:
+    post:
+      tags: [Auth]
+      operationId: stepUp
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TotpCode' }
+      responses:
+        '200':
+          description: Step-up token (berlaku 5 menit)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [step_up_token, expires_at]
+                        properties:
+                          step_up_token: { type: string }
+                          expires_at: { $ref: '#/components/schemas/DateTime' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  # ==========================================================================
+  # MEMBER
+  # ==========================================================================
+  /api/v1/me:
+    get:
+      tags: [Member]
+      operationId: getMe
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    patch:
+      tags: [Member]
+      operationId: updateMe
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                phone: { type: string, maxLength: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Me' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/v1/me/password:
+    put:
+      tags: [Member]
+      operationId: changePassword
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { $ref: '#/components/schemas/Password' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/v1/me/permissions:
+    get:
+      tags: [Member]
+      operationId: getMyPermissions
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: Permission efektif; super_admin berisi `["*"]`
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/MyPermissions' }
+
+  /api/v1/me/sessions:
+    get:
+      tags: [Member]
+      operationId: listMySessions
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Session' } }
+
+  /api/v1/me/sessions/{id}:
+    delete:
+      tags: [Member]
+      operationId: revokeMySession
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/me/orders:
+    get:
+      tags: [Member]
+      operationId: listMyOrders
+      x-permission: self:orders
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - { name: status, in: query, schema: { type: string }, description: 'Satu/lebih `OrderStatus`, dipisah koma' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/OrderListItem' } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/me/orders/{invoice_no}:
+    get:
+      tags: [Member]
+      operationId: getMyOrder
+      x-permission: self:orders
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/InvoiceNo' } ]
+      responses:
+        '200':
+          description: Detail lengkap (SN tidak disamarkan)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PublicOrder' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/me/ledger:
+    get:
+      tags: [Member]
+      operationId: listMyLedger
+      x-permission: self:balance
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - { name: type, in: query, schema: { $ref: '#/components/schemas/LedgerType' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/LedgerEntry' } }
+
+  /api/v1/me/deposits:
+    post:
+      tags: [Member]
+      operationId: createDeposit
+      summary: Buat deposit saldo (minimal `settings.min_deposit`, default Rp10.000)
+      x-permission: self:deposit
+      x-idempotent: true
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, payment_method]
+              properties:
+                amount: { $ref: '#/components/schemas/Money' }
+                payment_method: { type: string, example: VA_BCA }
+      responses:
+        '201':
+          description: Deposit dibuat
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Deposit' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    get:
+      tags: [Member]
+      operationId: listMyDeposits
+      x-permission: self:deposit
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Deposit' } }
+
+  /api/v1/me/deposits/{id}:
+    get:
+      tags: [Member]
+      operationId: getMyDeposit
+      x-permission: self:deposit
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Deposit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ==========================================================================
+  # RESELLER (pengaturan, via JWT)
+  # ==========================================================================
+  /api/v1/me/api-keys:
+    get:
+      tags: [Reseller]
+      operationId: listMyApiKeys
+      x-permission: h2h:access
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/ApiKey' } }
+    post:
+      tags: [Reseller]
+      operationId: createMyApiKey
+      summary: Buat API key; `secret` hanya ditampilkan sekali
+      x-permission: h2h:access
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/StepUpToken' } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 100 }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ApiKeyCreated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/me/api-keys/{id}:
+    delete:
+      tags: [Reseller]
+      operationId: revokeMyApiKey
+      x-permission: h2h:access
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/StepUpToken'
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/me/h2h-settings:
+    get:
+      tags: [Reseller]
+      operationId: getMyH2hSettings
+      x-permission: h2h:access
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/H2hSettings' }
+    put:
+      tags: [Reseller]
+      operationId: updateMyH2hSettings
+      x-permission: h2h:access
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/StepUpToken' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [callback_url, ip_whitelist]
+              properties:
+                callback_url: { type: [string, 'null'], format: uri, maxLength: 512 }
+                ip_whitelist: { type: array, items: { type: string, description: IP atau CIDR } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/H2hSettings' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/v1/me/h2h-settings/callback-secret:
+    post:
+      tags: [Reseller]
+      operationId: rotateMyCallbackSecret
+      summary: Buat/rotasi callback secret; ditampilkan sekali, secret lama langsung tidak berlaku
+      x-permission: h2h:access
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/StepUpToken' } ]
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [callback_secret, rotated_at]
+                        properties:
+                          callback_secret: { type: string, example: cs_live_9f2b... }
+                          rotated_at: { $ref: '#/components/schemas/DateTime' }
+
+  /api/v1/me/h2h-callbacks:
+    get:
+      tags: [Reseller]
+      operationId: listMyH2hCallbacks
+      x-permission: h2h:access
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/DeliveryStatus' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/ResellerCallbackLog' } }
+
+  # ==========================================================================
+  # H2H
+  # ==========================================================================
+  /api/h2h/v1/products:
+    get:
+      tags: [H2H]
+      operationId: h2hListProducts
+      security: [ { h2hApiKey: [], h2hTimestamp: [], h2hSignature: [] } ]
+      parameters:
+        - { name: brand, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/H2hProduct' } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/h2h/v1/balance:
+    get:
+      tags: [H2H]
+      operationId: h2hGetBalance
+      security: [ { h2hApiKey: [], h2hTimestamp: [], h2hSignature: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [balance]
+                        properties:
+                          balance: { $ref: '#/components/schemas/Money' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /api/h2h/v1/orders:
+    post:
+      tags: [H2H]
+      operationId: h2hCreateOrder
+      description: |
+        Dibayar dari saldo. `ref_id` unik per reseller dan menjadi kunci idempotensi
+        (`Idempotency-Key` opsional). `max_price` lebih rendah dari harga saat ini → `422 PRICE_CHANGED`.
+      x-idempotent: true
+      security: [ { h2hApiKey: [], h2hTimestamp: [], h2hSignature: [] } ]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/H2hOrderRequest' }
+      responses:
+        '202':
+          description: Diterima & sedang diproses
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/H2hOrder' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/h2h/v1/orders/{ref_id}:
+    get:
+      tags: [H2H]
+      operationId: h2hGetOrder
+      security: [ { h2hApiKey: [], h2hTimestamp: [], h2hSignature: [] } ]
+      parameters:
+        - { name: ref_id, in: path, required: true, schema: { type: string, maxLength: 64 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/H2hOrder' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ==========================================================================
+  # WEBHOOK MASUK (format vendor, tanpa envelope)
+  # ==========================================================================
+  /api/v1/webhooks/payments/{gateway_code}:
+    post:
+      tags: [Webhook]
+      operationId: paymentWebhook
+      description: |
+        Format body & balasan mengikuti vendor (adapter `WebhookAck`). Idempoten per
+        `source + event_id`. Nominal ≥ `settings.payment_recheck_threshold` dikonfirmasi ulang via
+        `CheckStatus`. `PAID` untuk order/deposit yang sudah `EXPIRED` tidak diproses (alert admin).
+      parameters:
+        - { name: gateway_code, in: path, required: true, schema: { type: string, example: xendit } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Diterima (format balasan sesuai vendor) }
+        '401': { description: Signature tidak valid }
+
+  /api/v1/webhooks/providers/{provider_code}:
+    post:
+      tags: [Webhook]
+      operationId: providerWebhook
+      parameters:
+        - { name: provider_code, in: path, required: true, schema: { type: string, example: digiflazz } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Diterima (format balasan sesuai vendor) }
+        '401': { description: Signature tidak valid }
+
+  # ==========================================================================
+  # ADMIN — DASHBOARD & LAPORAN
+  # ==========================================================================
+  /api/admin/v1/dashboard/summary:
+    get:
+      tags: [Admin Dashboard]
+      operationId: adminDashboardSummary
+      x-permission: dashboard:view
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: '`profit` hanya ada bila punya `dashboard:view_profit`'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/DashboardSummary' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/v1/dashboard/vendor-health:
+    get:
+      tags: [Admin Dashboard]
+      operationId: adminVendorHealth
+      x-permission: dashboard:view
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          providers: { type: array, items: { $ref: '#/components/schemas/VendorHealth' } }
+                          gateways: { type: array, items: { $ref: '#/components/schemas/VendorHealth' } }
+
+  /api/admin/v1/reports/sales:
+    get:
+      tags: [Admin Dashboard]
+      operationId: adminSalesReport
+      x-permission: reports:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - { name: group_by, in: query, required: true, schema: { type: string, enum: [day, category, brand, product] } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/SalesReportRow' } }
+
+  /api/admin/v1/reports/sales/export:
+    get:
+      tags: [Admin Dashboard]
+      operationId: adminExportSalesReport
+      x-permission: reports:export
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - { name: group_by, in: query, required: true, schema: { type: string, enum: [day, category, brand, product] } }
+        - $ref: '#/components/parameters/ExportFormat'
+      responses:
+        '200': { $ref: '#/components/responses/FileExport' }
+
+  /api/admin/v1/reconciliations:
+    get:
+      tags: [Admin Dashboard]
+      operationId: adminListReconciliations
+      x-permission: reports:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Reconciliation' } }
+    post:
+      tags: [Admin Dashboard]
+      operationId: adminRunReconciliation
+      x-permission: reconciliation:run
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_type, period_date]
+              properties:
+                target_type: { $ref: '#/components/schemas/ReconciliationTarget' }
+                target_id: { $ref: '#/components/schemas/Id', description: 'Provider/PG tertentu; kosong = semua' }
+                period_date: { type: string, format: date }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+
+  /api/admin/v1/reconciliations/{id}:
+    get:
+      tags: [Admin Dashboard]
+      operationId: adminGetReconciliation
+      x-permission: reports:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ReconciliationDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ==========================================================================
+  # ADMIN — KATALOG
+  # ==========================================================================
+  /api/admin/v1/categories:
+    get:
+      tags: [Admin Catalog]
+      operationId: adminListCategories
+      x-permission: catalog:read
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AdminCategory' } }
+    post:
+      tags: [Admin Catalog]
+      operationId: adminCreateCategory
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminCategory' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/categories/{id}:
+    patch:
+      tags: [Admin Catalog]
+      operationId: adminUpdateCategory
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminCategory' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Admin Catalog]
+      operationId: adminDeleteCategory
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/brands:
+    get:
+      tags: [Admin Catalog]
+      operationId: adminListBrands
+      x-permission: catalog:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Q'
+        - { name: category_id, in: query, schema: { $ref: '#/components/schemas/Id' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AdminBrand' } }
+    post:
+      tags: [Admin Catalog]
+      operationId: adminCreateBrand
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BrandInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminBrand' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/brands/{id}:
+    get:
+      tags: [Admin Catalog]
+      operationId: adminGetBrand
+      x-permission: catalog:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminBrand' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Admin Catalog]
+      operationId: adminUpdateBrand
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BrandInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminBrand' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Admin Catalog]
+      operationId: adminDeleteBrand
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/products:
+    get:
+      tags: [Admin Catalog]
+      operationId: adminListProducts
+      x-permission: catalog:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Q'
+        - { name: brand_id, in: query, schema: { $ref: '#/components/schemas/Id' } }
+        - { name: is_active, in: query, schema: { type: boolean } }
+        - { name: is_available, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AdminProduct' } }
+    post:
+      tags: [Admin Catalog]
+      operationId: adminCreateProduct
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminProduct' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/products/bulk:
+    patch:
+      tags: [Admin Catalog]
+      operationId: adminBulkUpdateProducts
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [id]
+                    properties:
+                      id: { $ref: '#/components/schemas/Id' }
+                      is_active: { type: boolean }
+                      sort_order: { type: integer }
+                      fixed_price: { type: [integer, 'null'] }
+                      badge: { type: [string, 'null'] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          updated: { type: integer }
+
+  /api/admin/v1/products/{id}:
+    get:
+      tags: [Admin Catalog]
+      operationId: adminGetProduct
+      x-permission: catalog:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminProduct' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Admin Catalog]
+      operationId: adminUpdateProduct
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminProduct' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Admin Catalog]
+      operationId: adminDeleteProduct
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/admin/v1/products/{id}/providers:
+    get:
+      tags: [Admin Catalog]
+      operationId: adminGetProductProviders
+      x-permission: providers:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ProductRouting' }
+    put:
+      tags: [Admin Catalog]
+      operationId: adminSetProductProviders
+      summary: Set ulang routing & mapping produk ke provider
+      description: |
+        Strategi `priority` memakai `providers.priority` (global). `max_attempts` = jumlah maksimum
+        provider **berbeda** yang dicoba; provider yang sama tidak dicoba ulang.
+      x-permission: providers:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductRoutingInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ProductRouting' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/banners:
+    get:
+      tags: [Admin Catalog]
+      operationId: adminListBanners
+      x-permission: catalog:read
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AdminBanner' } }
+    post:
+      tags: [Admin Catalog]
+      operationId: adminCreateBanner
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BannerInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminBanner' }
+
+  /api/admin/v1/banners/{id}:
+    patch:
+      tags: [Admin Catalog]
+      operationId: adminUpdateBanner
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BannerInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminBanner' }
+    delete:
+      tags: [Admin Catalog]
+      operationId: adminDeleteBanner
+      x-permission: catalog:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  # ==========================================================================
+  # ADMIN — MEDIA
+  # ==========================================================================
+  /api/admin/v1/media:
+    get:
+      tags: [Admin Media]
+      operationId: adminListMedia
+      x-permission: media:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Q'
+        - { name: mime_type, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Media' } }
+    post:
+      tags: [Admin Media]
+      operationId: adminUploadMedia
+      summary: Unggah gambar (maks. 2 MB; PNG/JPEG/WebP/SVG). Checksum sama → media lama dikembalikan
+      x-permission: media:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                alt_text: { type: string, maxLength: 255 }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Media' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/media/{id}:
+    get:
+      tags: [Admin Media]
+      operationId: adminGetMedia
+      x-permission: media:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/MediaDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Admin Media]
+      operationId: adminUpdateMedia
+      x-permission: media:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alt_text]
+              properties:
+                alt_text: { type: string, maxLength: 255 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Media' }
+    delete:
+      tags: [Admin Media]
+      operationId: adminDeleteMedia
+      description: Ditolak `409 CONFLICT` (`details[0].code = MEDIA_IN_USE`) bila masih dipakai.
+      x-permission: media:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ==========================================================================
+  # ADMIN — HARGA & PROMO
+  # ==========================================================================
+  /api/admin/v1/pricing-rules:
+    get:
+      tags: [Admin Pricing]
+      operationId: adminListPricingRules
+      x-permission: pricing:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - { name: scope, in: query, schema: { $ref: '#/components/schemas/PricingScope' } }
+        - { name: scope_id, in: query, schema: { $ref: '#/components/schemas/Id' } }
+        - { name: tier_id, in: query, schema: { $ref: '#/components/schemas/Id' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/PricingRule' } }
+    post:
+      tags: [Admin Pricing]
+      operationId: adminCreatePricingRule
+      description: 'Resolusi: product → brand → category → global (global hanya bila kategori tanpa aturan).'
+      x-permission: pricing:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PricingRuleInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PricingRule' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/pricing-rules/{id}:
+    patch:
+      tags: [Admin Pricing]
+      operationId: adminUpdatePricingRule
+      x-permission: pricing:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PricingRuleInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PricingRule' }
+    delete:
+      tags: [Admin Pricing]
+      operationId: adminDeletePricingRule
+      x-permission: pricing:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /api/admin/v1/pricing/simulate:
+    post:
+      tags: [Admin Pricing]
+      operationId: adminSimulatePricing
+      x-permission: pricing:read
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id: { $ref: '#/components/schemas/Id' }
+                tier_id: { $ref: '#/components/schemas/Id' }
+                payment_method: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PricingSimulation' }
+
+  /api/admin/v1/tiers:
+    get:
+      tags: [Admin Pricing]
+      operationId: adminListTiers
+      x-permission: pricing:read
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Tier' } }
+
+  /api/admin/v1/tiers/{id}:
+    patch:
+      tags: [Admin Pricing]
+      operationId: adminUpdateTier
+      x-permission: pricing:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 64 }
+                rank: { type: integer }
+                is_default: { type: boolean }
+                auto_upgrade_min_volume: { type: [integer, 'null'] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Tier' }
+
+  /api/admin/v1/promos:
+    get:
+      tags: [Admin Pricing]
+      operationId: adminListPromos
+      x-permission: promos:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Q'
+        - { name: is_active, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Promo' } }
+    post:
+      tags: [Admin Pricing]
+      operationId: adminCreatePromo
+      x-permission: promos:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Promo' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/promos/{id}:
+    patch:
+      tags: [Admin Pricing]
+      operationId: adminUpdatePromo
+      x-permission: promos:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Promo' }
+    delete:
+      tags: [Admin Pricing]
+      operationId: adminDeletePromo
+      x-permission: promos:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  # ==========================================================================
+  # ADMIN — PROVIDER
+  # ==========================================================================
+  /api/admin/v1/providers:
+    get:
+      tags: [Admin Provider]
+      operationId: adminListProviders
+      x-permission: providers:read
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Provider' } }
+    post:
+      tags: [Admin Provider]
+      operationId: adminCreateProvider
+      description: Adapter dengan `code` yang sama harus sudah ada di kode.
+      x-permission: providers:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Provider' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/providers/{id}:
+    get:
+      tags: [Admin Provider]
+      operationId: adminGetProvider
+      x-permission: providers:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Provider' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Admin Provider]
+      operationId: adminUpdateProvider
+      x-permission: providers:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Provider' }
+
+  /api/admin/v1/providers/{id}/credentials:
+    put:
+      tags: [Admin Provider]
+      operationId: adminSetProviderCredentials
+      description: Kredensial tidak pernah dikembalikan dalam respons.
+      x-permission: providers:manage_credentials
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CredentialsInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/v1/providers/{id}/test-connection:
+    post:
+      tags: [Admin Provider]
+      operationId: adminTestProvider
+      x-permission: providers:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ConnectionTestResult' }
+
+  /api/admin/v1/providers/{id}/sync-prices:
+    post:
+      tags: [Admin Provider]
+      operationId: adminSyncProviderPrices
+      x-permission: catalog:sync
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+
+  /api/admin/v1/providers/{id}/reset-circuit:
+    post:
+      tags: [Admin Provider]
+      operationId: adminResetProviderCircuit
+      x-permission: providers:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  # ==========================================================================
+  # ADMIN — PAYMENT GATEWAY & METODE BAYAR
+  # ==========================================================================
+  /api/admin/v1/payment-gateways:
+    get:
+      tags: [Admin Payment]
+      operationId: adminListGateways
+      x-permission: payments:read
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/PaymentGateway' } }
+    post:
+      tags: [Admin Payment]
+      operationId: adminCreateGateway
+      x-permission: payments:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentGatewayInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PaymentGateway' }
+
+  /api/admin/v1/payment-gateways/{id}:
+    patch:
+      tags: [Admin Payment]
+      operationId: adminUpdateGateway
+      x-permission: payments:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentGatewayInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PaymentGateway' }
+
+  /api/admin/v1/payment-gateways/{id}/credentials:
+    put:
+      tags: [Admin Payment]
+      operationId: adminSetGatewayCredentials
+      x-permission: payments:manage_credentials
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CredentialsInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/v1/payment-gateways/{id}/test-connection:
+    post:
+      tags: [Admin Payment]
+      operationId: adminTestGateway
+      x-permission: payments:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ConnectionTestResult' }
+
+  /api/admin/v1/payment-methods:
+    get:
+      tags: [Admin Payment]
+      operationId: adminListPaymentMethods
+      x-permission: payments:read
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AdminPaymentMethod' } }
+    post:
+      tags: [Admin Payment]
+      operationId: adminCreatePaymentMethod
+      x-permission: payments:write
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentMethodInput' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminPaymentMethod' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/payment-methods/{id}:
+    patch:
+      tags: [Admin Payment]
+      operationId: adminUpdatePaymentMethod
+      x-permission: payments:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentMethodInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminPaymentMethod' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/payment-methods/{id}/gateways:
+    put:
+      tags: [Admin Payment]
+      operationId: adminSetPaymentMethodGateways
+      x-permission: payments:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gateways]
+              properties:
+                gateways: { type: array, items: { $ref: '#/components/schemas/PaymentMethodGateway' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminPaymentMethod' }
+
+  # ==========================================================================
+  # ADMIN — ORDER
+  # ==========================================================================
+  /api/admin/v1/orders:
+    get:
+      tags: [Admin Order]
+      operationId: adminListOrders
+      x-permission: orders:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - { name: status, in: query, schema: { type: string }, description: 'Satu/lebih `OrderStatus`, dipisah koma' }
+        - { name: provider_id, in: query, schema: { $ref: '#/components/schemas/Id' } }
+        - { name: payment_method, in: query, schema: { type: string } }
+        - { name: user_id, in: query, schema: { $ref: '#/components/schemas/Id' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AdminOrderListItem' } }
+
+  /api/admin/v1/orders/export:
+    get:
+      tags: [Admin Order]
+      operationId: adminExportOrders
+      x-permission: reports:export
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - { name: status, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/ExportFormat'
+      responses:
+        '200': { $ref: '#/components/responses/FileExport' }
+
+  /api/admin/v1/orders/{id}:
+    get:
+      tags: [Admin Order]
+      operationId: adminGetOrder
+      description: PII disamarkan tanpa `customers:view_pii`. `available_actions` sudah difilter status & permission.
+      x-permission: orders:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminOrderDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/admin/v1/orders/{id}/attempts:
+    get:
+      tags: [Admin Order]
+      operationId: adminGetOrderAttempts
+      summary: Raw request/response provider (sudah dimasking)
+      x-permission: orders:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/OrderAttemptDetail' } }
+
+  /api/admin/v1/orders/{id}/retry:
+    post:
+      tags: [Admin Order]
+      operationId: adminRetryOrder
+      description: 'Status awal: `PAID`, `FAILED` (belum refund), `PROCESSING` macet > 15 menit.'
+      x-permission: orders:retry
+      x-idempotent: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderActionBase' }
+      responses:
+        '200': { $ref: '#/components/responses/AdminOrder' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/orders/{id}/switch-provider:
+    post:
+      tags: [Admin Order]
+      operationId: adminSwitchOrderProvider
+      x-permission: orders:switch_provider
+      x-idempotent: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/OrderActionBase'
+                - type: object
+                  required: [provider_id]
+                  properties:
+                    provider_id: { $ref: '#/components/schemas/Id' }
+      responses:
+        '200': { $ref: '#/components/responses/AdminOrder' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/orders/{id}/mark:
+    post:
+      tags: [Admin Order]
+      operationId: adminMarkOrder
+      description: '`SUCCESS` dari `PROCESSING`/`FAILED`; `FAILED` dari `PROCESSING`.'
+      x-permission: orders:mark_status
+      x-sensitive: true
+      x-idempotent: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/OrderActionBase'
+                - type: object
+                  required: [status]
+                  properties:
+                    status: { type: string, enum: [SUCCESS, FAILED] }
+                    serial_number: { type: string, description: Wajib bila status = SUCCESS }
+      responses:
+        '200': { $ref: '#/components/responses/AdminOrder' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/orders/{id}/refund:
+    post:
+      tags: [Admin Order]
+      operationId: adminRefundOrder
+      description: |
+        Hanya dari `FAILED`. Guest tanpa akun → Finance mentransfer di luar sistem lalu mencatat
+        `destination: MANUAL` dengan `reason` berisi bukti transfer.
+      x-permission: orders:refund
+      x-sensitive: true
+      x-idempotent: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/OrderActionBase'
+                - type: object
+                  properties:
+                    destination: { $ref: '#/components/schemas/RefundDestination' }
+      responses:
+        '200': { $ref: '#/components/responses/AdminOrder' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/orders/{id}/resend-notification:
+    post:
+      tags: [Admin Order]
+      operationId: adminResendOrderNotification
+      x-permission: notifications:resend
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channels: { type: array, items: { $ref: '#/components/schemas/NotificationChannel' } }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+
+  # ==========================================================================
+  # ADMIN — USER & SALDO
+  # ==========================================================================
+  /api/admin/v1/users:
+    get:
+      tags: [Admin User]
+      operationId: adminListUsers
+      x-permission: users:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Q'
+        - { name: role, in: query, schema: { type: string } }
+        - { name: tier, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/UserStatus' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AdminUser' } }
+
+  /api/admin/v1/users/{id}:
+    get:
+      tags: [Admin User]
+      operationId: adminGetUser
+      x-permission: users:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminUser' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Admin User]
+      operationId: adminUpdateUser
+      description: Tier `RESELLER_*` hanya untuk pemegang role `reseller` (lainnya → `422 VALIDATION_ERROR`).
+      x-permission: users:write
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                tier_id: { $ref: '#/components/schemas/Id' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminUser' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/users/{id}/suspend:
+    post:
+      tags: [Admin User]
+      operationId: adminSuspendUser
+      x-permission: users:suspend
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReasonInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/users/{id}/activate:
+    post:
+      tags: [Admin User]
+      operationId: adminActivateUser
+      x-permission: users:suspend
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /api/admin/v1/users/{id}/reset-2fa:
+    post:
+      tags: [Admin User]
+      operationId: adminResetUser2fa
+      x-permission: users:write
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReasonInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /api/admin/v1/users/{id}/roles:
+    put:
+      tags: [Admin User]
+      operationId: adminSetUserRoles
+      description: |
+        Assign role `reseller` → tier `RESELLER_SILVER` (bila belum ber-tier reseller); dicabut → `MEMBER`.
+        Anti-eskalasi → `403 PERMISSION_DENIED` (`ESCALATION_BLOCKED`); ubah role sendiri → `403`
+        (`SELF_ASSIGNMENT_BLOCKED`); cabut Super Admin terakhir → `409` (`LAST_SUPER_ADMIN`).
+      x-permission: users:assign_role
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_ids, reason]
+              properties:
+                role_ids: { type: array, items: { $ref: '#/components/schemas/Id' } }
+                reason: { type: string, minLength: 5 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AdminUser' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/users/{id}/ledger:
+    get:
+      tags: [Admin User]
+      operationId: adminGetUserLedger
+      x-permission: balance:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/LedgerEntry' } }
+
+  /api/admin/v1/users/{id}/balance-adjustments:
+    post:
+      tags: [Admin User]
+      operationId: adminAdjustBalance
+      x-permission: balance:adjust
+      x-sensitive: true
+      x-idempotent: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount: { type: integer, description: 'Positif = tambah, negatif = kurangi; tidak boleh 0' }
+                reason: { type: string, minLength: 5 }
+                reference: { type: string, maxLength: 64 }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LedgerEntry' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/staff:
+    post:
+      tags: [Admin User]
+      operationId: adminInviteStaff
+      description: 'Butuh `users:write` **dan** `users:assign_role`.'
+      x-permission: users:write+users:assign_role
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/StepUpToken' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role_ids]
+              properties:
+                email: { type: string, format: email }
+                role_ids: { type: array, minItems: 1, items: { $ref: '#/components/schemas/Id' } }
+      responses:
+        '201':
+          description: Undangan terkirim
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id: { $ref: '#/components/schemas/Id' }
+                          email: { type: string, format: email }
+                          expires_at: { $ref: '#/components/schemas/DateTime' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ==========================================================================
+  # ADMIN — RBAC
+  # ==========================================================================
+  /api/admin/v1/permissions:
+    get:
+      tags: [Admin RBAC]
+      operationId: adminListPermissions
+      x-permission: roles:read
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: Katalog permission (read-only, dari seed), dikelompokkan per resource
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/PermissionGroup' } }
+
+  /api/admin/v1/roles:
+    get:
+      tags: [Admin RBAC]
+      operationId: adminListRoles
+      x-permission: roles:read
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Role' } }
+    post:
+      tags: [Admin RBAC]
+      operationId: adminCreateRole
+      x-permission: roles:write
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/StepUpToken' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name, scope, permissions]
+              properties:
+                code: { type: string, pattern: '^[a-z0-9_]{2,64}$' }
+                name: { type: string, maxLength: 100 }
+                description: { type: string }
+                scope: { $ref: '#/components/schemas/RoleScope' }
+                permissions: { type: array, items: { type: string } }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/RoleDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/roles/{id}:
+    get:
+      tags: [Admin RBAC]
+      operationId: adminGetRole
+      x-permission: roles:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/RoleDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Admin RBAC]
+      operationId: adminUpdateRole
+      description: Role sistem hanya boleh diubah deskripsinya.
+      x-permission: roles:write
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 100 }
+                description: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/RoleDetail' }
+    delete:
+      tags: [Admin RBAC]
+      operationId: adminDeleteRole
+      description: Ditolak bila `is_system` atau masih dipegang user.
+      x-permission: roles:write
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/StepUpToken'
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/admin/v1/roles/{id}/permissions:
+    put:
+      tags: [Admin RBAC]
+      operationId: adminSetRolePermissions
+      x-permission: roles:write
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/StepUpToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permissions, reason]
+              properties:
+                permissions: { type: array, items: { type: string } }
+                reason: { type: string, minLength: 5 }
+      responses:
+        '200':
+          description: Role terbaru + jumlah user yang `perm_version`-nya dinaikkan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/RoleDetail'
+                          - type: object
+                            properties:
+                              affected_users: { type: integer }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/v1/roles/{id}/users:
+    get:
+      tags: [Admin RBAC]
+      operationId: adminListRoleUsers
+      x-permission: roles:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AdminUser' } }
+
+  # ==========================================================================
+  # ADMIN — AUDIT, PENGATURAN, NOTIFIKASI
+  # ==========================================================================
+  /api/admin/v1/audit-logs:
+    get:
+      tags: [Admin Audit & Settings]
+      operationId: adminListAuditLogs
+      x-permission: audit:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - { name: actor_id, in: query, schema: { $ref: '#/components/schemas/Id' } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: entity, in: query, schema: { type: string } }
+        - { name: entity_id, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/AuditLog' } }
+
+  /api/admin/v1/audit-logs/{id}:
+    get:
+      tags: [Admin Audit & Settings]
+      operationId: adminGetAuditLog
+      x-permission: audit:read
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AuditLog' }
+
+  /api/admin/v1/settings:
+    get:
+      tags: [Admin Audit & Settings]
+      operationId: adminGetSettings
+      description: Nilai rahasia (`is_secret`) disamarkan.
+      x-permission: settings:write
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Setting' } }
+    patch:
+      tags: [Admin Audit & Settings]
+      operationId: adminUpdateSettings
+      x-permission: settings:write
+      x-sensitive: true
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/StepUpToken' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [settings]
+              properties:
+                settings:
+                  type: object
+                  description: 'Map key → value. Key yang dikenal: min_deposit, maintenance_mode, payment_recheck_threshold, cs_contact, admin_alert_whatsapp, kirimdev_api_key'
+                  additionalProperties: true
+                reason: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Setting' } }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /api/admin/v1/notifications/logs:
+    get:
+      tags: [Admin Audit & Settings]
+      operationId: adminListNotificationLogs
+      x-permission: orders:read
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - { name: channel, in: query, schema: { $ref: '#/components/schemas/NotificationChannel' } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/DeliveryStatus' } }
+        - { name: related_id, in: query, schema: { $ref: '#/components/schemas/Id' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedEnvelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/NotificationLog' } }
+
+  # ==========================================================================
+  # SISTEM
+  # ==========================================================================
+  /healthz:
+    get:
+      tags: [System]
+      operationId: healthz
+      responses:
+        '200': { description: Proses hidup }
+  /readyz:
+    get:
+      tags: [System]
+      operationId: readyz
+      responses:
+        '200': { description: PostgreSQL & Redis siap }
+        '503': { description: Dependensi belum siap }
+  /metrics:
+    get:
+      tags: [System]
+      operationId: metrics
+      description: Prometheus; hanya dari jaringan internal.
+      responses:
+        '200':
+          description: OK
+          content:
+            text/plain: { schema: { type: string } }
+
+# ============================================================================
+# CALLBACK KELUAR KE RESELLER
+# ============================================================================
+webhooks:
+  resellerOrderCallback:
+    post:
+      summary: Callback status order ke `callback_url` reseller
+      description: |
+        Dikirim saat order mencapai `SUCCESS`, `FAILED`, atau `REFUNDED`. `X-Signature` dihitung
+        seperti H2H, memakai **callback secret** reseller; path = path dari `callback_url`.
+        Reseller wajib membalas 2xx dalam 10 detik. Retry: 1m, 5m, 15m, 1j, 6j (maks. 5 kali);
+        reseller harus idempoten berdasarkan `event_id`.
+      parameters:
+        - { name: X-Timestamp, in: header, required: true, schema: { type: integer } }
+        - { name: X-Signature, in: header, required: true, schema: { type: string } }
+        - { name: X-Event-Id, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResellerCallbackPayload' }
+      responses:
+        '200': { description: Diterima oleh reseller }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Access token 15 menit. Claim: sub, sid, pv (perm_version), iat, exp.'
+    h2hApiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+    h2hTimestamp:
+      type: apiKey
+      in: header
+      name: X-Timestamp
+      description: Unix epoch detik; toleransi ±300 detik
+    h2hSignature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: |
+        hex(HMAC_SHA256(secret, METHOD + "\n" + PATH_WITH_QUERY + "\n" + X-Timestamp + "\n" + hex(SHA256(body))))
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    Slug:
+      name: slug
+      in: path
+      required: true
+      schema: { type: string }
+    InvoiceNo:
+      name: invoice_no
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/InvoiceNo' }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Sort:
+      name: sort
+      in: query
+      description: Nama field; awalan `-` untuk menurun, mis. `-created_at`
+      schema: { type: string }
+    Q:
+      name: q
+      in: query
+      schema: { type: string }
+    From:
+      name: from
+      in: query
+      description: Inklusif
+      schema: { $ref: '#/components/schemas/DateTime' }
+    To:
+      name: to
+      in: query
+      description: Eksklusif
+      schema: { $ref: '#/components/schemas/DateTime' }
+    ExportFormat:
+      name: format
+      in: query
+      required: true
+      schema: { type: string, enum: [csv, xlsx] }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID; disimpan 24 jam. Body berbeda dengan key sama → `409 IDEMPOTENCY_CONFLICT`.
+      schema: { type: string, format: uuid }
+    CaptchaToken:
+      name: X-Captcha-Token
+      in: header
+      required: false
+      description: Wajib untuk guest di checkout & endpoint auth publik
+      schema: { type: string }
+    StepUpToken:
+      name: X-Step-Up-Token
+      in: header
+      required: true
+      description: Dari `POST /auth/step-up`; berlaku 5 menit. Tanpa token → `403 STEP_UP_REQUIRED`.
+      schema: { type: string }
+
+  responses:
+    Ok:
+      description: OK
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { type: 'null' }
+    Accepted:
+      description: Diterima, diproses asinkron
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      job_id: { type: string }
+    AdminOrder:
+      description: Order terbaru setelah aksi
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AdminOrderDetail' }
+    FileExport:
+      description: File export
+      content:
+        text/csv: { schema: { type: string, format: binary } }
+        application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: { schema: { type: string, format: binary } }
+    BadRequest:
+      description: '`BAD_REQUEST`'
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Unauthenticated:
+      description: '`UNAUTHENTICATED`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS`, `INVALID_SIGNATURE`'
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Forbidden:
+      description: '`PERMISSION_DENIED`, `STEP_UP_REQUIRED`, `ACCOUNT_SUSPENDED`, `EMAIL_NOT_VERIFIED`, `IP_NOT_ALLOWED`'
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    NotFound:
+      description: '`NOT_FOUND` — tidak ada atau bukan milik pemanggil'
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Conflict:
+      description: '`CONFLICT`, `INVALID_STATE_TRANSITION`, `IDEMPOTENCY_CONFLICT`, `VERSION_CONFLICT`'
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Unprocessable:
+      description: '`VALIDATION_ERROR`, `PRODUCT_UNAVAILABLE`, `PAYMENT_METHOD_UNAVAILABLE`, `PROMO_INVALID`, `INSUFFICIENT_BALANCE`, `ACCOUNT_NOT_FOUND`, `PRICE_CHANGED`'
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    RateLimited:
+      description: '`RATE_LIMITED`; lihat header `Retry-After`'
+      headers:
+        Retry-After: { schema: { type: integer } }
+        X-RateLimit-Limit: { schema: { type: integer } }
+        X-RateLimit-Remaining: { schema: { type: integer } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    UpstreamError:
+      description: '`UPSTREAM_ERROR` — provider/PG gagal merespons'
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  schemas:
+    # ---------------------------------------------------------------- dasar
+    Id: { type: string, format: uuid, description: UUID v7 }
+    DateTime: { type: string, format: date-time, description: RFC 3339 UTC }
+    Money: { type: integer, format: int64, description: Rupiah bulat }
+    InvoiceNo: { type: string, pattern: '^RC-\d{8}-[A-Z0-9]{6}$', example: RC-20261010-7F3K9Q }
+    Password: { type: string, minLength: 8, description: Minimal 8 karakter, mengandung huruf dan angka }
+    TotpCode:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string, pattern: '^\d{6}$' }
+    ReasonInput:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 5, maxLength: 500 }
+
+    Envelope:
+      type: object
+      required: [success, request_id]
+      properties:
+        success: { type: boolean, const: true }
+        request_id: { type: string, example: req_01JA7Z8Q2N4K }
+    PagedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [meta]
+          properties:
+            meta: { $ref: '#/components/schemas/PageMeta' }
+    PageMeta:
+      type: object
+      required: [page, per_page, total, total_pages]
+      properties:
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+        total_pages: { type: integer }
+    ErrorEnvelope:
+      type: object
+      required: [success, error, request_id]
+      properties:
+        success: { type: boolean, const: false }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string, description: Bahasa sesuai Accept-Language, aman ditampilkan }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  code: { type: string }
+                  message: { type: string }
+                  required_permission: { type: string }
+        request_id: { type: string }
+    ErrorCode:
+      type: string
+      enum:
+        - BAD_REQUEST
+        - UNAUTHENTICATED
+        - TOKEN_EXPIRED
+        - INVALID_CREDENTIALS
+        - INVALID_SIGNATURE
+        - PERMISSION_DENIED
+        - STEP_UP_REQUIRED
+        - ACCOUNT_SUSPENDED
+        - EMAIL_NOT_VERIFIED
+        - IP_NOT_ALLOWED
+        - NOT_FOUND
+        - CONFLICT
+        - INVALID_STATE_TRANSITION
+        - IDEMPOTENCY_CONFLICT
+        - VERSION_CONFLICT
+        - VALIDATION_ERROR
+        - PRODUCT_UNAVAILABLE
+        - PAYMENT_METHOD_UNAVAILABLE
+        - PROMO_INVALID
+        - INSUFFICIENT_BALANCE
+        - ACCOUNT_NOT_FOUND
+        - PRICE_CHANGED
+        - RATE_LIMITED
+        - UPSTREAM_ERROR
+        - SERVICE_UNAVAILABLE
+        - INTERNAL_ERROR
+
+    # ---------------------------------------------------------------- enum
+    OrderStatus: { type: string, enum: [PENDING_PAYMENT, PAID, PROCESSING, SUCCESS, FAILED, REFUNDED, EXPIRED] }
+    PaymentStatus: { type: string, enum: [PENDING, PAID, EXPIRED, FAILED, REFUNDED] }
+    PaymentPurpose: { type: string, enum: [ORDER, DEPOSIT] }
+    PaymentMethodGroup: { type: string, enum: [QRIS, VIRTUAL_ACCOUNT, EWALLET, RETAIL, BALANCE] }
+    FeeBearer: { type: string, enum: [CUSTOMER, MERCHANT, SPLIT] }
+    AttemptStatus: { type: string, enum: [SUCCESS, PENDING, FAILED] }
+    LedgerType: { type: string, enum: [DEPOSIT, PURCHASE, REFUND, ADJUSTMENT] }
+    DepositStatus: { type: string, enum: [PENDING, PAID, EXPIRED, FAILED] }
+    UserStatus: { type: string, enum: [ACTIVE, SUSPENDED, PENDING_VERIFICATION] }
+    RoleScope: { type: string, enum: [internal, customer] }
+    RoutingStrategy: { type: string, enum: [cheapest, priority, weighted] }
+    VendorMode: { type: string, enum: [sandbox, production] }
+    AmountType: { type: string, enum: [FLAT, PERCENT] }
+    PricingScope: { type: string, enum: [global, category, brand, product] }
+    CircuitState: { type: string, enum: [CLOSED, OPEN, HALF_OPEN] }
+    RefundDestination: { type: string, enum: [BALANCE, SOURCE, MANUAL], default: BALANCE }
+    InputFieldType: { type: string, enum: [text, number, phone, select] }
+    InstructionType: { type: string, enum: [QR, VA, REDIRECT, CODE] }
+    NotificationChannel: { type: string, enum: [EMAIL, WHATSAPP] }
+    DeliveryStatus: { type: string, enum: [QUEUED, SENT, FAILED] }
+    ReconciliationTarget: { type: string, enum: [PROVIDER, PAYMENT_GATEWAY] }
+    ReconciliationStatus: { type: string, enum: [RUNNING, COMPLETED, FAILED] }
+    ReconciliationItemType: { type: string, enum: [MISSING_INTERNAL, MISSING_EXTERNAL, AMOUNT_MISMATCH, STATUS_MISMATCH] }
+
+    # ---------------------------------------------------------------- katalog publik
+    Category:
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        slug: { type: string }
+        name: { type: string }
+        icon_url: { type: [string, 'null'], format: uri }
+        sort_order: { type: integer }
+    CategoryRef:
+      type: object
+      properties:
+        slug: { type: string }
+        name: { type: string }
+    BrandSummary:
+      type: object
+      required: [id, slug, name, category]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        slug: { type: string }
+        name: { type: string }
+        category: { $ref: '#/components/schemas/CategoryRef' }
+        icon_url: { type: [string, 'null'], format: uri }
+        is_popular: { type: boolean }
+    BrandDetail:
+      allOf:
+        - $ref: '#/components/schemas/BrandSummary'
+        - type: object
+          properties:
+            banner_url: { type: [string, 'null'], format: uri }
+            description: { type: [string, 'null'] }
+            supports_account_check: { type: boolean }
+            input_schema: { type: array, items: { $ref: '#/components/schemas/InputField' } }
+    InputField:
+      type: object
+      required: [key, label, type, required]
+      properties:
+        key: { type: string, example: user_id }
+        label: { type: string, example: User ID }
+        type: { $ref: '#/components/schemas/InputFieldType' }
+        required: { type: boolean }
+        pattern: { type: [string, 'null'] }
+        options:
+          type: array
+          items:
+            type: object
+            required: [value, label]
+            properties:
+              value: { type: string }
+              label: { type: string }
+    PublicProduct:
+      type: object
+      required: [id, sku, name, price, is_available]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        sku: { type: string, example: MLBB-86 }
+        name: { type: string }
+        price: { $ref: '#/components/schemas/Money' }
+        original_price: { type: [integer, 'null'] }
+        is_available: { type: boolean }
+        badge: { type: [string, 'null'] }
+        sort_order: { type: integer }
+    Banner:
+      type: object
+      required: [id, title, image_url]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        title: { type: string }
+        image_url: { type: string, format: uri }
+        link_url: { type: [string, 'null'] }
+    Target:
+      type: object
+      description: Sesuai `input_schema` brand
+      additionalProperties: { type: string }
+      example: { user_id: '12345678', zone_id: '2001' }
+    AccountCheckRequest:
+      type: object
+      required: [brand_slug, target]
+      properties:
+        brand_slug: { type: string }
+        target: { $ref: '#/components/schemas/Target' }
+
+    # ---------------------------------------------------------------- checkout
+    PublicPaymentMethod:
+      type: object
+      required: [code, name, group, fee, total, is_available]
+      properties:
+        code: { type: string, example: QRIS }
+        name: { type: string }
+        group: { $ref: '#/components/schemas/PaymentMethodGroup' }
+        icon_url: { type: [string, 'null'], format: uri }
+        fee: { $ref: '#/components/schemas/Money' }
+        total: { $ref: '#/components/schemas/Money' }
+        min_amount: { $ref: '#/components/schemas/Money' }
+        max_amount: { type: [integer, 'null'] }
+        is_available: { type: boolean }
+        unavailable_reason:
+          type: [string, 'null']
+          enum: [LOGIN_REQUIRED, INSUFFICIENT_BALANCE, OUT_OF_RANGE, MAINTENANCE, null]
+    QuoteRequest:
+      type: object
+      required: [product_id, payment_method]
+      properties:
+        product_id: { $ref: '#/components/schemas/Id' }
+        payment_method: { type: string }
+        promo_code: { type: [string, 'null'] }
+    Quote:
+      type: object
+      required: [product, discount, fee, total, quote_token, quote_expires_at]
+      properties:
+        product:
+          type: object
+          properties:
+            id: { $ref: '#/components/schemas/Id' }
+            name: { type: string }
+            price: { $ref: '#/components/schemas/Money' }
+        discount: { $ref: '#/components/schemas/Money' }
+        fee: { $ref: '#/components/schemas/Money' }
+        total: { $ref: '#/components/schemas/Money' }
+        promo:
+          type: [object, 'null']
+          properties:
+            code: { type: string }
+            applied: { type: boolean }
+            message: { type: string }
+        quote_token: { type: string }
+        quote_expires_at: { $ref: '#/components/schemas/DateTime' }
+    CreateOrderRequest:
+      type: object
+      required: [product_id, target, payment_method]
+      properties:
+        product_id: { $ref: '#/components/schemas/Id' }
+        target: { $ref: '#/components/schemas/Target' }
+        payment_method: { type: string }
+        promo_code: { type: [string, 'null'] }
+        quote_token: { type: [string, 'null'] }
+        contact:
+          type: object
+          description: Guest wajib mengisi minimal satu
+          properties:
+            email: { type: [string, 'null'], format: email }
+            whatsapp: { type: [string, 'null'] }
+    OrderAmount:
+      type: object
+      required: [price, discount, fee, total]
+      properties:
+        price: { $ref: '#/components/schemas/Money' }
+        discount: { $ref: '#/components/schemas/Money' }
+        fee: { $ref: '#/components/schemas/Money' }
+        total: { $ref: '#/components/schemas/Money' }
+    ProductRef:
+      type: object
+      properties:
+        brand: { type: string }
+        name: { type: string }
+    PaymentInstructions:
+      type: object
+      required: [type]
+      properties:
+        type: { $ref: '#/components/schemas/InstructionType' }
+        qr_string: { type: [string, 'null'] }
+        qr_image_url: { type: [string, 'null'] }
+        va_number: { type: [string, 'null'] }
+        payment_code: { type: [string, 'null'] }
+        checkout_url: { type: [string, 'null'] }
+        steps: { type: array, items: { type: string } }
+    CheckoutPayment:
+      type: object
+      required: [method, status, expires_at]
+      properties:
+        method: { type: string }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        instructions: { $ref: '#/components/schemas/PaymentInstructions' }
+        expires_at: { $ref: '#/components/schemas/DateTime' }
+    CheckoutOrder:
+      type: object
+      required: [invoice_no, status, product, target_display, amount, payment, created_at, tracking_url]
+      properties:
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        product: { $ref: '#/components/schemas/ProductRef' }
+        target_display: { type: string }
+        amount: { $ref: '#/components/schemas/OrderAmount' }
+        payment: { $ref: '#/components/schemas/CheckoutPayment' }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        tracking_url: { type: string, format: uri }
+    TimelineEntry:
+      type: object
+      required: [status, at]
+      properties:
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        at: { $ref: '#/components/schemas/DateTime' }
+        actor: { type: string, description: 'system, user, admin, provider, gateway (admin saja)' }
+    PublicOrder:
+      type: object
+      required: [invoice_no, status, product, target_display, amount, payment, timeline]
+      properties:
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        product: { $ref: '#/components/schemas/ProductRef' }
+        target_display: { type: string }
+        amount: { $ref: '#/components/schemas/OrderAmount' }
+        payment:
+          type: object
+          properties:
+            method: { type: string }
+            status: { $ref: '#/components/schemas/PaymentStatus' }
+            paid_at: { type: [string, 'null'], format: date-time }
+        delivery:
+          type: [object, 'null']
+          properties:
+            serial_number: { type: [string, 'null'] }
+            message: { type: [string, 'null'] }
+        timeline: { type: array, items: { $ref: '#/components/schemas/TimelineEntry' } }
+    OrderListItem:
+      type: object
+      required: [invoice_no, status, product, total, created_at]
+      properties:
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        product: { $ref: '#/components/schemas/ProductRef' }
+        target_display: { type: string }
+        total: { $ref: '#/components/schemas/Money' }
+        payment_method: { type: string }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+
+    # ---------------------------------------------------------------- auth & member
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string, maxLength: 120 }
+        email: { type: string, format: email }
+        phone: { type: [string, 'null'], maxLength: 20 }
+        password: { $ref: '#/components/schemas/Password' }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    AuthUser:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        email: { type: string, format: email }
+        tier: { type: string, example: MEMBER }
+        roles: { type: array, items: { type: string } }
+    LoginResult:
+      type: object
+      required: [two_factor_required]
+      properties:
+        two_factor_required: { type: boolean }
+        two_factor_setup_required: { type: boolean, description: User internal wajib setup 2FA dulu }
+        challenge_token: { type: string, description: Ada bila two_factor_required = true }
+        challenge_expires_at: { $ref: '#/components/schemas/DateTime' }
+        access_token: { type: string }
+        access_token_expires_at: { $ref: '#/components/schemas/DateTime' }
+        refresh_token: { type: string }
+        refresh_token_expires_at: { $ref: '#/components/schemas/DateTime' }
+        user: { $ref: '#/components/schemas/AuthUser' }
+    TierRef:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        code: { type: string }
+        name: { type: string }
+    Me:
+      type: object
+      required: [id, name, email, tier, balance, status, two_factor_enabled, roles]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        email: { type: string, format: email }
+        phone: { type: [string, 'null'] }
+        tier: { $ref: '#/components/schemas/TierRef' }
+        balance: { $ref: '#/components/schemas/Money' }
+        status: { $ref: '#/components/schemas/UserStatus' }
+        two_factor_enabled: { type: boolean }
+        email_verified_at: { type: [string, 'null'], format: date-time }
+        roles: { type: array, items: { type: string } }
+    MyPermissions:
+      type: object
+      required: [roles, permissions, perm_version]
+      properties:
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string }
+              name: { type: string }
+        permissions: { type: array, items: { type: string }, example: [dashboard:view, orders:read] }
+        perm_version: { type: integer }
+    Session:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        user_agent: { type: [string, 'null'] }
+        ip: { type: [string, 'null'] }
+        is_current: { type: boolean }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        last_used_at: { type: [string, 'null'], format: date-time }
+    LedgerEntry:
+      type: object
+      required: [id, type, amount, balance_after, reference, description, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        type: { $ref: '#/components/schemas/LedgerType' }
+        amount: { type: integer, description: Positif = masuk, negatif = keluar }
+        balance_after: { $ref: '#/components/schemas/Money' }
+        reference:
+          type: object
+          properties:
+            type: { type: string, enum: [order, deposit, adjustment] }
+            id: { type: string }
+        description: { type: string }
+        reason: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+    Deposit:
+      type: object
+      required: [id, amount, status, payment, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        amount: { $ref: '#/components/schemas/Money' }
+        status: { $ref: '#/components/schemas/DepositStatus' }
+        payment: { $ref: '#/components/schemas/CheckoutPayment' }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        paid_at: { type: [string, 'null'], format: date-time }
+
+    # ---------------------------------------------------------------- reseller & h2h
+    ApiKey:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: [string, 'null'] }
+        key_prefix: { type: string, example: pk_live_3f9a }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        last_used_ip: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        revoked_at: { type: [string, 'null'], format: date-time }
+    ApiKeyCreated:
+      type: object
+      required: [id, key, secret, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        key: { type: string, example: pk_live_3f9a... }
+        secret: { type: string, example: sk_live_c81e..., description: Hanya ditampilkan sekali }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+    H2hSettings:
+      type: object
+      properties:
+        callback_url: { type: [string, 'null'], format: uri }
+        ip_whitelist: { type: array, items: { type: string } }
+        rate_limit_per_minute: { type: integer }
+        is_h2h_enabled: { type: boolean }
+        callback_secret_configured: { type: boolean }
+        callback_secret_rotated_at: { type: [string, 'null'], format: date-time }
+    ResellerCallbackLog:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        event: { type: string, enum: [order.succeeded, order.failed, order.refunded] }
+        event_id: { type: string }
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        ref_id: { type: string }
+        url: { type: string }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        attempts: { type: integer }
+        last_http_status: { type: [integer, 'null'] }
+        last_error: { type: [string, 'null'] }
+        next_retry_at: { type: [string, 'null'], format: date-time }
+        delivered_at: { type: [string, 'null'], format: date-time }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+    H2hProduct:
+      type: object
+      required: [sku, name, price, is_available]
+      properties:
+        sku: { type: string }
+        name: { type: string }
+        brand: { type: string }
+        category: { type: string }
+        price: { $ref: '#/components/schemas/Money' }
+        is_available: { type: boolean }
+        input_schema: { type: array, items: { $ref: '#/components/schemas/InputField' } }
+    H2hOrderRequest:
+      type: object
+      required: [ref_id, sku, target]
+      properties:
+        ref_id: { type: string, maxLength: 64, description: Unik per reseller; kunci idempotensi }
+        sku: { type: string }
+        target: { $ref: '#/components/schemas/Target' }
+        max_price: { type: [integer, 'null'] }
+    H2hOrder:
+      type: object
+      required: [ref_id, invoice_no, status, price, created_at]
+      properties:
+        ref_id: { type: string }
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        price: { $ref: '#/components/schemas/Money' }
+        balance_after: { $ref: '#/components/schemas/Money' }
+        serial_number: { type: [string, 'null'] }
+        message: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+    ResellerCallbackPayload:
+      type: object
+      required: [event, event_id, data]
+      properties:
+        event: { type: string, enum: [order.succeeded, order.failed, order.refunded] }
+        event_id: { type: string }
+        data:
+          type: object
+          properties:
+            ref_id: { type: string }
+            invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+            status: { $ref: '#/components/schemas/OrderStatus' }
+            sku: { type: string }
+            price: { $ref: '#/components/schemas/Money' }
+            serial_number: { type: [string, 'null'] }
+            message: { type: [string, 'null'] }
+            updated_at: { $ref: '#/components/schemas/DateTime' }
+
+    # ---------------------------------------------------------------- admin: dashboard & laporan
+    DashboardSummary:
+      type: object
+      properties:
+        orders_total: { type: integer }
+        orders_success: { type: integer }
+        success_rate: { type: number }
+        revenue: { $ref: '#/components/schemas/Money' }
+        profit: { $ref: '#/components/schemas/Money' }
+        pending_manual: { type: integer }
+        by_status:
+          type: object
+          additionalProperties: { type: integer }
+    VendorHealth:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        code: { type: string }
+        name: { type: string }
+        success_rate_24h: { type: [number, 'null'] }
+        latency_p95_ms: { type: [integer, 'null'] }
+        circuit_state: { $ref: '#/components/schemas/CircuitState' }
+    SalesReportRow:
+      type: object
+      properties:
+        key: { type: string }
+        label: { type: string }
+        orders: { type: integer }
+        revenue: { $ref: '#/components/schemas/Money' }
+        profit: { $ref: '#/components/schemas/Money' }
+    Reconciliation:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        target_type: { $ref: '#/components/schemas/ReconciliationTarget' }
+        provider_id: { type: [string, 'null'], format: uuid }
+        gateway_id: { type: [string, 'null'], format: uuid }
+        period_date: { type: string, format: date }
+        status: { $ref: '#/components/schemas/ReconciliationStatus' }
+        total_internal: { type: [integer, 'null'] }
+        total_external: { type: [integer, 'null'] }
+        mismatch_count: { type: [integer, 'null'] }
+        started_at: { $ref: '#/components/schemas/DateTime' }
+        finished_at: { type: [string, 'null'], format: date-time }
+    ReconciliationDetail:
+      allOf:
+        - $ref: '#/components/schemas/Reconciliation'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { $ref: '#/components/schemas/Id' }
+                  type: { $ref: '#/components/schemas/ReconciliationItemType' }
+                  reference: { type: string }
+                  order_id: { type: [string, 'null'], format: uuid }
+                  internal_data: { type: [object, 'null'] }
+                  external_data: { type: [object, 'null'] }
+                  resolved_at: { type: [string, 'null'], format: date-time }
+                  resolution_note: { type: [string, 'null'] }
+
+    # ---------------------------------------------------------------- admin: katalog & media
+    Media:
+      type: object
+      required: [id, url, mime_type, size_bytes, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        url: { type: string, format: uri }
+        original_name: { type: [string, 'null'] }
+        mime_type: { type: string, enum: [image/png, image/jpeg, image/webp, image/svg+xml] }
+        size_bytes: { type: integer }
+        width: { type: [integer, 'null'] }
+        height: { type: [integer, 'null'] }
+        alt_text: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+    MediaDetail:
+      allOf:
+        - $ref: '#/components/schemas/Media'
+        - type: object
+          properties:
+            usages:
+              type: array
+              items:
+                type: object
+                properties:
+                  entity: { type: string, enum: [category, brand, banner, payment_method] }
+                  entity_id: { $ref: '#/components/schemas/Id' }
+                  field: { type: string, example: icon_media_id }
+    AdminCategory:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        slug: { type: string }
+        name: { type: string }
+        icon_media_id: { type: [string, 'null'], format: uuid }
+        icon_url: { type: [string, 'null'], format: uri }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        updated_at: { $ref: '#/components/schemas/DateTime' }
+    CategoryInput:
+      type: object
+      properties:
+        slug: { type: string, pattern: '^[a-z0-9-]{2,80}$' }
+        name: { type: string, maxLength: 100 }
+        icon_media_id: { type: [string, 'null'], format: uuid }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+    AdminBrand:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        category_id: { $ref: '#/components/schemas/Id' }
+        slug: { type: string }
+        name: { type: string }
+        icon_media_id: { type: [string, 'null'], format: uuid }
+        icon_url: { type: [string, 'null'], format: uri }
+        banner_media_id: { type: [string, 'null'], format: uuid }
+        banner_url: { type: [string, 'null'], format: uri }
+        description: { type: [string, 'null'] }
+        input_schema: { type: array, items: { $ref: '#/components/schemas/InputField' } }
+        supports_account_check: { type: boolean }
+        is_popular: { type: boolean }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+        seo_title: { type: [string, 'null'] }
+        seo_description: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        updated_at: { $ref: '#/components/schemas/DateTime' }
+    BrandInput:
+      type: object
+      properties:
+        category_id: { $ref: '#/components/schemas/Id' }
+        slug: { type: string, pattern: '^[a-z0-9-]{2,100}$' }
+        name: { type: string, maxLength: 120 }
+        icon_media_id: { type: [string, 'null'], format: uuid }
+        banner_media_id: { type: [string, 'null'], format: uuid }
+        description: { type: [string, 'null'] }
+        input_schema: { type: array, items: { $ref: '#/components/schemas/InputField' } }
+        supports_account_check: { type: boolean }
+        is_popular: { type: boolean }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+        seo_title: { type: [string, 'null'], maxLength: 160 }
+        seo_description: { type: [string, 'null'], maxLength: 320 }
+    AdminProduct:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        brand_id: { $ref: '#/components/schemas/Id' }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        badge: { type: [string, 'null'] }
+        fixed_price: { type: [integer, 'null'], description: null = harga dinamis dari pricing }
+        original_price: { type: [integer, 'null'] }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+        is_available: { type: boolean, readOnly: true }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        updated_at: { $ref: '#/components/schemas/DateTime' }
+    ProductInput:
+      type: object
+      properties:
+        brand_id: { $ref: '#/components/schemas/Id' }
+        sku: { type: string, maxLength: 64 }
+        name: { type: string, maxLength: 150 }
+        description: { type: [string, 'null'] }
+        badge: { type: [string, 'null'], maxLength: 32 }
+        fixed_price: { type: [integer, 'null'] }
+        original_price: { type: [integer, 'null'] }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+    ProviderMapping:
+      type: object
+      properties:
+        provider_id: { $ref: '#/components/schemas/Id' }
+        provider_code: { type: string, readOnly: true }
+        provider_sku: { type: string }
+        weight: { type: [integer, 'null'], description: Untuk strategi weighted }
+        is_active: { type: boolean }
+        cost_price: { type: [integer, 'null'], readOnly: true }
+        is_available: { type: boolean, readOnly: true }
+        last_synced_at: { type: [string, 'null'], format: date-time, readOnly: true }
+    ProductRouting:
+      type: object
+      properties:
+        routing_strategy: { $ref: '#/components/schemas/RoutingStrategy' }
+        max_attempts: { type: integer }
+        mappings: { type: array, items: { $ref: '#/components/schemas/ProviderMapping' } }
+    ProductRoutingInput:
+      type: object
+      required: [routing_strategy, mappings]
+      properties:
+        routing_strategy: { $ref: '#/components/schemas/RoutingStrategy' }
+        max_attempts: { type: integer, minimum: 1, maximum: 10, default: 3 }
+        mappings:
+          type: array
+          items:
+            type: object
+            required: [provider_id, provider_sku]
+            properties:
+              provider_id: { $ref: '#/components/schemas/Id' }
+              provider_sku: { type: string, maxLength: 100 }
+              weight: { type: [integer, 'null'] }
+              is_active: { type: boolean, default: true }
+    AdminBanner:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        title: { type: string }
+        image_media_id: { $ref: '#/components/schemas/Id' }
+        image_url: { type: string, format: uri }
+        link_url: { type: [string, 'null'] }
+        sort_order: { type: integer }
+        starts_at: { type: [string, 'null'], format: date-time }
+        ends_at: { type: [string, 'null'], format: date-time }
+        is_active: { type: boolean }
+    BannerInput:
+      type: object
+      properties:
+        title: { type: string, maxLength: 150 }
+        image_media_id: { $ref: '#/components/schemas/Id' }
+        link_url: { type: [string, 'null'], maxLength: 512 }
+        sort_order: { type: integer }
+        starts_at: { type: [string, 'null'], format: date-time }
+        ends_at: { type: [string, 'null'], format: date-time }
+        is_active: { type: boolean }
+
+    # ---------------------------------------------------------------- admin: harga & promo
+    PricingRule:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        scope: { $ref: '#/components/schemas/PricingScope' }
+        scope_id: { type: [string, 'null'], format: uuid }
+        tier_id: { type: [string, 'null'], format: uuid, description: null = semua tier }
+        margin_type: { $ref: '#/components/schemas/AmountType' }
+        margin_value: { type: number, description: Rupiah bila FLAT, persen bila PERCENT }
+        min_margin: { $ref: '#/components/schemas/Money' }
+        is_active: { type: boolean }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        updated_at: { $ref: '#/components/schemas/DateTime' }
+    PricingRuleInput:
+      type: object
+      required: [scope, margin_type, margin_value]
+      properties:
+        scope: { $ref: '#/components/schemas/PricingScope' }
+        scope_id: { type: [string, 'null'], format: uuid, description: Wajib kecuali scope = global }
+        tier_id: { type: [string, 'null'], format: uuid }
+        margin_type: { $ref: '#/components/schemas/AmountType' }
+        margin_value: { type: number, minimum: 0 }
+        min_margin: { type: integer, minimum: 0, default: 0 }
+        is_active: { type: boolean, default: true }
+    PricingSimulation:
+      type: object
+      properties:
+        provider: { type: [string, 'null'], description: Kode provider yang dipilih router }
+        cost: { $ref: '#/components/schemas/Money' }
+        margin: { $ref: '#/components/schemas/Money' }
+        price: { $ref: '#/components/schemas/Money' }
+        fee: { $ref: '#/components/schemas/Money' }
+        applied_rule:
+          type: [object, 'null']
+          properties:
+            id: { $ref: '#/components/schemas/Id' }
+            scope: { $ref: '#/components/schemas/PricingScope' }
+        loss_protected: { type: boolean, description: true bila PRC-05 akan menolak transaksi }
+    Tier:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        code: { type: string, enum: [GUEST, MEMBER, RESELLER_SILVER, RESELLER_GOLD, RESELLER_PLATINUM] }
+        name: { type: string }
+        rank: { type: integer }
+        is_default: { type: boolean }
+        auto_upgrade_min_volume: { type: [integer, 'null'] }
+    Promo:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        code: { type: string }
+        name: { type: string }
+        type: { $ref: '#/components/schemas/AmountType' }
+        value: { type: number }
+        max_discount: { type: [integer, 'null'] }
+        min_transaction: { $ref: '#/components/schemas/Money' }
+        quota: { type: [integer, 'null'] }
+        used_count: { type: integer, readOnly: true }
+        per_user_limit: { type: [integer, 'null'] }
+        rules: { type: object, description: 'Filter kategori/brand/produk/tier/metode bayar' }
+        starts_at: { $ref: '#/components/schemas/DateTime' }
+        ends_at: { $ref: '#/components/schemas/DateTime' }
+        is_active: { type: boolean }
+    PromoInput:
+      type: object
+      required: [code, name, type, value, starts_at, ends_at]
+      properties:
+        code: { type: string, pattern: '^[A-Z0-9]{3,32}$' }
+        name: { type: string, maxLength: 120 }
+        type: { $ref: '#/components/schemas/AmountType' }
+        value: { type: number, minimum: 0 }
+        max_discount: { type: [integer, 'null'] }
+        min_transaction: { type: integer, minimum: 0 }
+        quota: { type: [integer, 'null'] }
+        per_user_limit: { type: [integer, 'null'] }
+        rules: { type: object }
+        starts_at: { $ref: '#/components/schemas/DateTime' }
+        ends_at: { $ref: '#/components/schemas/DateTime' }
+        is_active: { type: boolean }
+
+    # ---------------------------------------------------------------- admin: vendor
+    Provider:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        code: { type: string, example: digiflazz }
+        name: { type: string }
+        mode: { $ref: '#/components/schemas/VendorMode' }
+        is_active: { type: boolean }
+        priority: { type: integer, description: Prioritas global untuk strategi priority; kecil = didahulukan }
+        balance: { type: [integer, 'null'] }
+        balance_min_alert: { $ref: '#/components/schemas/Money' }
+        balance_checked_at: { type: [string, 'null'], format: date-time }
+        circuit_state: { $ref: '#/components/schemas/CircuitState' }
+        success_rate_24h: { type: [number, 'null'] }
+        credentials_configured: { type: boolean }
+        config: { type: object }
+    ProviderInput:
+      type: object
+      properties:
+        code: { type: string, description: Hanya saat create; harus sama dengan Code() adapter }
+        name: { type: string, maxLength: 100 }
+        mode: { $ref: '#/components/schemas/VendorMode' }
+        is_active: { type: boolean }
+        priority: { type: integer }
+        balance_min_alert: { type: integer, minimum: 0 }
+        config: { type: object, description: Timeout, kode error retryable, dll. }
+    CredentialsInput:
+      type: object
+      required: [credentials]
+      properties:
+        credentials:
+          type: object
+          additionalProperties: { type: string }
+          description: Isi bergantung adapter; disimpan terenkripsi
+    ConnectionTestResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        latency_ms: { type: integer }
+        balance: { type: [integer, 'null'] }
+        message: { type: [string, 'null'] }
+    PaymentGateway:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        code: { type: string, example: xendit }
+        name: { type: string }
+        mode: { $ref: '#/components/schemas/VendorMode' }
+        is_active: { type: boolean }
+        circuit_state: { $ref: '#/components/schemas/CircuitState' }
+        credentials_configured: { type: boolean }
+        config: { type: object }
+    PaymentGatewayInput:
+      type: object
+      properties:
+        code: { type: string, description: Hanya saat create }
+        name: { type: string }
+        mode: { $ref: '#/components/schemas/VendorMode' }
+        is_active: { type: boolean }
+        config: { type: object }
+    PaymentMethodGateway:
+      type: object
+      required: [gateway_id, gateway_method_code]
+      properties:
+        gateway_id: { $ref: '#/components/schemas/Id' }
+        gateway_code: { type: string, readOnly: true }
+        gateway_method_code: { type: string, example: BCA }
+        priority: { type: integer, default: 1 }
+        is_active: { type: boolean, default: true }
+    AdminPaymentMethod:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        code: { type: string }
+        name: { type: string }
+        group: { $ref: '#/components/schemas/PaymentMethodGroup' }
+        icon_media_id: { type: [string, 'null'], format: uuid }
+        icon_url: { type: [string, 'null'], format: uri }
+        fee_flat: { $ref: '#/components/schemas/Money' }
+        fee_percent: { type: number }
+        fee_bearer: { $ref: '#/components/schemas/FeeBearer' }
+        fee_customer_share: { type: [number, 'null'] }
+        min_amount: { $ref: '#/components/schemas/Money' }
+        max_amount: { type: [integer, 'null'] }
+        expiry_minutes: { type: integer }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+        gateways: { type: array, items: { $ref: '#/components/schemas/PaymentMethodGateway' } }
+    PaymentMethodInput:
+      type: object
+      description: '`fee_customer_share` (0–100) wajib bila `fee_bearer = SPLIT`.'
+      properties:
+        code: { type: string, maxLength: 50 }
+        name: { type: string, maxLength: 100 }
+        group: { $ref: '#/components/schemas/PaymentMethodGroup' }
+        icon_media_id: { type: [string, 'null'], format: uuid }
+        fee_flat: { type: integer, minimum: 0 }
+        fee_percent: { type: number, minimum: 0 }
+        fee_bearer: { $ref: '#/components/schemas/FeeBearer' }
+        fee_customer_share: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        min_amount: { type: integer, minimum: 0 }
+        max_amount: { type: [integer, 'null'] }
+        expiry_minutes: { type: integer, minimum: 1 }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+
+    # ---------------------------------------------------------------- admin: order
+    OrderActionBase:
+      type: object
+      required: [reason, version]
+      properties:
+        reason: { type: string, minLength: 5, maxLength: 255 }
+        version: { type: integer, description: Versi order terakhir yang dibaca; beda → 409 VERSION_CONFLICT }
+    AdminOrderListItem:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        source: { type: string, enum: [WEB, H2H] }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        product: { $ref: '#/components/schemas/ProductRef' }
+        target_display: { type: string }
+        total: { $ref: '#/components/schemas/Money' }
+        payment_method: { type: string }
+        provider: { type: [string, 'null'] }
+        user: { $ref: '#/components/schemas/OrderUserRef' }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+        updated_at: { $ref: '#/components/schemas/DateTime' }
+    OrderUserRef:
+      type: object
+      properties:
+        id: { type: [string, 'null'], format: uuid }
+        type: { type: string, enum: [GUEST, MEMBER, RESELLER] }
+        name: { type: [string, 'null'] }
+    OrderAttempt:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        attempt_no: { type: integer }
+        provider: { type: string }
+        provider_sku: { type: string }
+        ref_id: { type: string, example: RC-20261010-7F3K9Q-1 }
+        status: { $ref: '#/components/schemas/AttemptStatus' }
+        cost_price: { $ref: '#/components/schemas/Money' }
+        error_code: { type: [string, 'null'] }
+        vendor_error_code: { type: [string, 'null'] }
+        vendor_message: { type: [string, 'null'] }
+        is_retryable: { type: [boolean, 'null'] }
+        latency_ms: { type: [integer, 'null'] }
+        triggered_by: { type: [string, 'null'], format: uuid }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+    OrderAttemptDetail:
+      allOf:
+        - $ref: '#/components/schemas/OrderAttempt'
+        - type: object
+          properties:
+            request_payload: { type: [object, 'null'] }
+            response_payload: { type: [object, 'null'] }
+    AdminOrderDetail:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        invoice_no: { $ref: '#/components/schemas/InvoiceNo' }
+        source: { type: string, enum: [WEB, H2H] }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        version: { type: integer }
+        user: { $ref: '#/components/schemas/OrderUserRef' }
+        contact:
+          type: object
+          description: Disamarkan tanpa customers:view_pii
+          properties:
+            email: { type: [string, 'null'] }
+            whatsapp: { type: [string, 'null'] }
+        product:
+          type: object
+          properties:
+            id: { $ref: '#/components/schemas/Id' }
+            sku: { type: string }
+            name: { type: string }
+            brand: { type: string }
+        target: { $ref: '#/components/schemas/Target' }
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/OrderAmount'
+            - type: object
+              properties:
+                cost: { type: [integer, 'null'] }
+                margin: { type: [integer, 'null'] }
+        payment:
+          type: [object, 'null']
+          properties:
+            id: { $ref: '#/components/schemas/Id' }
+            gateway: { type: [string, 'null'] }
+            method: { type: string }
+            status: { $ref: '#/components/schemas/PaymentStatus' }
+            external_id: { type: [string, 'null'] }
+            expires_at: { type: [string, 'null'], format: date-time }
+            paid_at: { type: [string, 'null'], format: date-time }
+        delivery:
+          type: [object, 'null']
+          properties:
+            serial_number: { type: [string, 'null'] }
+            message: { type: [string, 'null'] }
+        failure_reason: { type: [string, 'null'] }
+        refund_destination:
+          oneOf:
+            - $ref: '#/components/schemas/RefundDestination'
+            - type: 'null'
+        attempts: { type: array, items: { $ref: '#/components/schemas/OrderAttempt' } }
+        available_actions:
+          type: array
+          items: { type: string, enum: [retry, switch-provider, mark, refund, resend-notification] }
+        timeline: { type: array, items: { $ref: '#/components/schemas/TimelineEntry' } }
+        expires_at: { $ref: '#/components/schemas/DateTime' }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+
+    # ---------------------------------------------------------------- admin: user & rbac
+    AdminUser:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        email: { type: string, description: Disamarkan tanpa customers:view_pii }
+        phone: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/UserStatus' }
+        tier: { $ref: '#/components/schemas/TierRef' }
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { $ref: '#/components/schemas/Id' }
+              code: { type: string }
+              name: { type: string }
+        balance: { $ref: '#/components/schemas/Money' }
+        two_factor_enabled: { type: boolean }
+        email_verified_at: { type: [string, 'null'], format: date-time }
+        last_login_at: { type: [string, 'null'], format: date-time }
+        suspended_reason: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+    PermissionGroup:
+      type: object
+      properties:
+        resource: { type: string, example: orders }
+        label: { type: string, example: Order }
+        permissions:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string, example: orders:refund }
+              description: { type: string }
+              is_sensitive: { type: boolean }
+    Role:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        code: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        scope: { $ref: '#/components/schemas/RoleScope' }
+        is_system: { type: boolean }
+        user_count: { type: integer }
+    RoleDetail:
+      allOf:
+        - $ref: '#/components/schemas/Role'
+        - type: object
+          properties:
+            permissions: { type: array, items: { type: string } }
+            created_at: { $ref: '#/components/schemas/DateTime' }
+            updated_at: { $ref: '#/components/schemas/DateTime' }
+
+    # ---------------------------------------------------------------- admin: audit, setting, notifikasi
+    AuditLog:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        actor:
+          type: [object, 'null']
+          description: null = system
+          properties:
+            id: { $ref: '#/components/schemas/Id' }
+            name: { type: string }
+            roles: { type: array, items: { type: string } }
+        action: { type: string, example: order.refund }
+        entity: { type: string }
+        entity_id: { type: [string, 'null'] }
+        reason: { type: [string, 'null'] }
+        before: { type: [object, 'null'] }
+        after: { type: [object, 'null'] }
+        ip: { type: [string, 'null'] }
+        user_agent: { type: [string, 'null'] }
+        request_id: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/DateTime' }
+    Setting:
+      type: object
+      properties:
+        key: { type: string }
+        value: { description: Nilai JSON; disamarkan bila is_secret }
+        is_secret: { type: boolean }
+        description: { type: [string, 'null'] }
+        updated_at: { $ref: '#/components/schemas/DateTime' }
+    NotificationLog:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        channel: { $ref: '#/components/schemas/NotificationChannel' }
+        recipient: { type: string, description: Disamarkan tanpa customers:view_pii }
+        template: { type: string }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        attempts: { type: integer }
+        related_type: { type: [string, 'null'] }
+        related_id: { type: [string, 'null'], format: uuid }
+        provider_message_id: { type: [string, 'null'] }
+        last_error: { type: [string, 'null'] }
+        sent_at: { type: [string, 'null'], format: date-time }
+        created_at: { $ref: '#/components/schemas/DateTime' }

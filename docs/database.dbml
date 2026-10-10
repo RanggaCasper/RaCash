@@ -1,0 +1,1121 @@
+// ============================================================================
+// RaCash — Database Schema (PostgreSQL)
+// Versi   : 0.2 (Draft) — 10 Oktober 2026
+// Terkait : PRD.md v0.5, ARCHITECTURE.md v0.2, API_CONTRACT.md v0.3
+//
+// Konvensi:
+// - PK uuid (v7, dibuat di aplikasi). Tabel pivot memakai PK gabungan.
+// - Uang: bigint rupiah bulat. Persentase: numeric(6,3).
+// - Waktu: timestamptz (UTC).
+// - Data terenkripsi (AES-GCM): kolom bytea + *_key_id untuk rotasi kunci.
+// - Satu TableGroup = satu modul. Hanya modul pemilik yang boleh menulis tabelnya.
+// - Partial index/unique ditulis di note (DBML tidak mendukung WHERE) dan
+//   wajib dibuat di file migrasi SQL.
+// ============================================================================
+
+Project racash {
+  database_type: 'PostgreSQL'
+  Note: 'RaCash — website top-up multi provider & multi payment gateway'
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+Enum user_status {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+}
+
+Enum role_scope {
+  internal
+  customer
+}
+
+Enum vendor_mode {
+  sandbox
+  production
+}
+
+Enum circuit_state {
+  CLOSED
+  OPEN
+  HALF_OPEN
+}
+
+Enum routing_strategy {
+  cheapest
+  priority
+  weighted
+}
+
+Enum input_field_type {
+  text
+  number
+  phone
+  select
+}
+
+Enum pricing_scope {
+  global
+  category
+  brand
+  product
+}
+
+Enum amount_type {
+  FLAT
+  PERCENT
+}
+
+Enum payment_method_group {
+  QRIS
+  VIRTUAL_ACCOUNT
+  EWALLET
+  RETAIL
+  BALANCE
+}
+
+Enum fee_bearer {
+  CUSTOMER
+  MERCHANT
+  SPLIT
+}
+
+Enum payment_status {
+  PENDING
+  PAID
+  EXPIRED
+  FAILED
+  REFUNDED
+}
+
+Enum payment_purpose {
+  ORDER
+  DEPOSIT
+}
+
+Enum order_status {
+  PENDING_PAYMENT
+  PAID
+  PROCESSING
+  SUCCESS
+  FAILED
+  REFUNDED
+  EXPIRED
+}
+
+Enum order_source {
+  WEB
+  H2H
+}
+
+Enum attempt_status {
+  SUCCESS
+  PENDING
+  FAILED
+}
+
+Enum ledger_type {
+  DEPOSIT
+  PURCHASE
+  REFUND
+  ADJUSTMENT
+}
+
+Enum deposit_status {
+  PENDING
+  PAID
+  EXPIRED
+  FAILED
+}
+
+Enum refund_destination {
+  BALANCE
+  SOURCE
+  MANUAL [note: 'Refund guest tanpa akun saldo, ditransfer manual oleh Finance']
+}
+
+Enum notification_channel {
+  EMAIL
+  WHATSAPP [note: 'Dikirim lewat Kirimdev (notifikasi pembeli & alert admin)']
+}
+
+Enum delivery_status {
+  QUEUED
+  SENT
+  FAILED
+}
+
+Enum webhook_source_type {
+  PAYMENT_GATEWAY
+  PROVIDER
+}
+
+Enum outbox_status {
+  PENDING
+  PUBLISHED
+  FAILED
+}
+
+Enum reconciliation_status {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+Enum reconciliation_target {
+  PROVIDER
+  PAYMENT_GATEWAY
+}
+
+Enum reconciliation_item_type {
+  MISSING_INTERNAL
+  MISSING_EXTERNAL
+  AMOUNT_MISMATCH
+  STATUS_MISMATCH
+}
+
+// ============================================================================
+// MODUL: user
+// ============================================================================
+
+Table tiers {
+  id uuid [pk]
+  code varchar(32) [not null, unique, note: 'GUEST, MEMBER, RESELLER_SILVER, RESELLER_GOLD, RESELLER_PLATINUM. Tier RESELLER_* hanya untuk pemegang role reseller; assign role reseller → tier RESELLER_SILVER, cabut → MEMBER']
+  name varchar(64) [not null]
+  rank smallint [not null, default: 0, note: 'Urutan tier; makin tinggi makin murah']
+  is_default boolean [not null, default: false, note: 'Tier untuk member baru']
+  auto_upgrade_min_volume bigint [note: 'Volume transaksi 30 hari untuk upgrade otomatis (P1); null = manual']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table users {
+  id uuid [pk]
+  name varchar(120) [not null]
+  email varchar(254) [not null, unique, note: 'Disimpan lowercase']
+  phone varchar(20)
+  password_hash varchar(255) [not null, note: 'argon2id']
+  tier_id uuid [not null, ref: > tiers.id]
+  status user_status [not null, default: 'PENDING_VERIFICATION']
+  balance bigint [not null, default: 0, note: 'Cache saldo; sumber kebenaran = balance_ledger. CHECK (balance >= 0)']
+  perm_version integer [not null, default: 1, note: 'Dinaikkan modul rbac saat permission user berubah']
+  two_factor_enabled boolean [not null, default: false]
+  email_verified_at timestamptz
+  last_login_at timestamptz
+  suspended_reason varchar(255)
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  deleted_at timestamptz
+
+  indexes {
+    phone
+    tier_id
+    status
+    created_at
+  }
+}
+
+Table staff_invitations {
+  id uuid [pk]
+  email varchar(254) [not null]
+  role_ids uuid[] [not null, note: 'Role yang akan di-assign saat undangan diterima']
+  token_hash varchar(128) [not null, unique]
+  invited_by uuid [not null, ref: > users.id]
+  accepted_user_id uuid [ref: > users.id]
+  expires_at timestamptz [not null]
+  accepted_at timestamptz
+  revoked_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    email
+  }
+}
+
+TableGroup user {
+  tiers
+  users
+  staff_invitations
+}
+
+// ============================================================================
+// MODUL: auth
+// ============================================================================
+
+Table sessions {
+  id uuid [pk, note: 'Dipakai sebagai claim sid di JWT']
+  user_id uuid [not null, ref: > users.id]
+  refresh_token_hash varchar(128) [not null, unique, note: 'SHA-256 dari refresh token aktif']
+  previous_token_hash varchar(128) [note: 'Untuk deteksi reuse; reuse → cabut sesi']
+  user_agent varchar(512)
+  ip inet
+  expires_at timestamptz [not null]
+  last_used_at timestamptz
+  revoked_at timestamptz
+  revoked_reason varchar(64)
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    user_id
+    expires_at
+  }
+}
+
+Table email_verifications {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  token_hash varchar(128) [not null, unique]
+  expires_at timestamptz [not null]
+  used_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table password_resets {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  token_hash varchar(128) [not null, unique]
+  expires_at timestamptz [not null]
+  used_at timestamptz
+  ip inet
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table user_totp {
+  user_id uuid [pk, ref: - users.id]
+  secret_encrypted bytea [not null]
+  secret_key_id varchar(32) [not null]
+  confirmed_at timestamptz [note: 'null = setup belum selesai']
+  last_used_step bigint [note: 'Mencegah replay kode TOTP yang sama']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table user_recovery_codes {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  code_hash varchar(128) [not null]
+  used_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    user_id
+  }
+}
+
+TableGroup auth {
+  sessions
+  email_verifications
+  password_resets
+  user_totp
+  user_recovery_codes
+}
+
+// ============================================================================
+// MODUL: rbac
+// ============================================================================
+
+Table roles {
+  id uuid [pk]
+  code varchar(64) [not null, unique, note: 'huruf kecil, angka, underscore']
+  name varchar(100) [not null]
+  description text
+  scope role_scope [not null]
+  is_system boolean [not null, default: false, note: 'Role bawaan: tidak bisa dihapus']
+  created_by uuid [ref: > users.id]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table permissions {
+  id uuid [pk]
+  code varchar(100) [not null, unique, note: 'resource:action, mis. orders:refund. Hanya dari seed, tidak via UI']
+  resource varchar(50) [not null]
+  action varchar(50) [not null]
+  description varchar(255) [not null]
+  is_sensitive boolean [not null, default: false, note: 'Butuh 2FA step-up']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    resource
+  }
+}
+
+Table role_permissions {
+  role_id uuid [not null, ref: > roles.id]
+  permission_id uuid [not null, ref: > permissions.id]
+  granted_by uuid [ref: > users.id]
+  granted_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (role_id, permission_id) [pk]
+    permission_id
+  }
+}
+
+Table user_roles {
+  user_id uuid [not null, ref: > users.id]
+  role_id uuid [not null, ref: > roles.id]
+  assigned_by uuid [ref: > users.id]
+  assigned_at timestamptz [not null, default: `now()`]
+  expires_at timestamptz [note: 'Role sementara (P2); null = permanen']
+
+  indexes {
+    (user_id, role_id) [pk]
+    role_id
+  }
+}
+
+TableGroup rbac {
+  roles
+  permissions
+  role_permissions
+  user_roles
+}
+
+// ============================================================================
+// MODUL: media
+// ============================================================================
+
+Table media {
+  id uuid [pk]
+  storage_key varchar(512) [not null, unique, note: 'Path objek di object storage (S3-compatible)']
+  url varchar(512) [not null, note: 'URL publik (CDN)']
+  original_name varchar(255)
+  mime_type varchar(64) [not null, note: 'image/png, image/jpeg, image/webp, image/svg+xml']
+  size_bytes integer [not null]
+  width integer
+  height integer
+  alt_text varchar(255)
+  checksum_sha256 varchar(64) [not null, note: 'Deteksi unggahan ganda; file yang sama dipakai ulang']
+  uploaded_by uuid [ref: > users.id]
+  created_at timestamptz [not null, default: `now()`]
+  deleted_at timestamptz [note: 'Hapus ditolak bila masih direferensikan']
+
+  Note: 'Pustaka media terpusat; direferensikan lewat *_media_id oleh categories, brands, banners, payment_methods'
+
+  indexes {
+    checksum_sha256
+    created_at
+  }
+}
+
+TableGroup media {
+  media
+}
+
+// ============================================================================
+// MODUL: catalog
+// ============================================================================
+
+Table categories {
+  id uuid [pk]
+  slug varchar(80) [not null, unique]
+  name varchar(100) [not null]
+  icon_media_id uuid [ref: > media.id]
+  sort_order integer [not null, default: 0]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  deleted_at timestamptz
+}
+
+Table brands {
+  id uuid [pk]
+  category_id uuid [not null, ref: > categories.id]
+  slug varchar(100) [not null, unique]
+  name varchar(120) [not null]
+  icon_media_id uuid [ref: > media.id]
+  banner_media_id uuid [ref: > media.id]
+  description text
+  input_schema jsonb [not null, default: '[]', note: '[{key,label,type,required,pattern,options}] — tipe: input_field_type']
+  supports_account_check boolean [not null, default: false]
+  is_popular boolean [not null, default: false]
+  sort_order integer [not null, default: 0]
+  is_active boolean [not null, default: true]
+  seo_title varchar(160)
+  seo_description varchar(320)
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  deleted_at timestamptz
+
+  indexes {
+    (category_id, sort_order)
+  }
+}
+
+Table products {
+  id uuid [pk]
+  brand_id uuid [not null, ref: > brands.id]
+  sku varchar(64) [not null, unique, note: 'SKU internal RaCash, mis. MLBB-86']
+  name varchar(150) [not null]
+  description text
+  badge varchar(32) [note: 'POPULER, PROMO, dll.']
+  fixed_price bigint [note: 'Diisi bila harga dikunci admin (mode fixed); null = dinamis dari pricing']
+  original_price bigint [note: 'Harga coret untuk tampilan']
+  sort_order integer [not null, default: 0]
+  is_active boolean [not null, default: true, note: 'Saklar manual admin']
+  is_available boolean [not null, default: true, note: 'Otomatis: false bila tak ada provider tersedia']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  deleted_at timestamptz
+
+  indexes {
+    (brand_id, sort_order)
+  }
+}
+
+Table banners {
+  id uuid [pk]
+  title varchar(150) [not null]
+  image_media_id uuid [not null, ref: > media.id]
+  link_url varchar(512)
+  sort_order integer [not null, default: 0]
+  starts_at timestamptz
+  ends_at timestamptz
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+TableGroup catalog {
+  categories
+  brands
+  products
+  banners
+}
+
+// ============================================================================
+// MODUL: provider
+// ============================================================================
+
+Table providers {
+  id uuid [pk]
+  code varchar(50) [not null, unique, note: 'Harus sama dengan Code() adapter, mis. digiflazz']
+  name varchar(100) [not null]
+  mode vendor_mode [not null, default: 'sandbox']
+  credentials_encrypted bytea [note: 'JSON kredensial terenkripsi; tidak pernah dikirim ke klien']
+  credentials_key_id varchar(32)
+  is_active boolean [not null, default: false]
+  priority integer [not null, default: 100, note: 'Prioritas global, dipakai strategi priority untuk semua produk; kecil = didahulukan']
+  balance bigint [note: 'Saldo terakhir dari pengecekan']
+  balance_min_alert bigint [not null, default: 0]
+  balance_checked_at timestamptz
+  circuit_state circuit_state [not null, default: 'CLOSED', note: 'Snapshot; state realtime di Redis']
+  circuit_opened_at timestamptz
+  last_price_sync_at timestamptz
+  config jsonb [not null, default: '{}', note: 'Timeout, kode error retryable, dll.']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table product_routing {
+  product_id uuid [pk, ref: - products.id]
+  strategy routing_strategy [not null, default: 'cheapest']
+  max_attempts smallint [not null, default: 3, note: 'Maks. jumlah provider BERBEDA yang dicoba; error retryable tidak diulang ke provider yang sama']
+  updated_by uuid [ref: > users.id]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table product_provider_map {
+  id uuid [pk]
+  product_id uuid [not null, ref: > products.id]
+  provider_id uuid [not null, ref: > providers.id]
+  provider_sku varchar(100) [not null]
+  cost_price bigint [note: 'Harga modal terakhir hasil sinkron']
+  is_available boolean [not null, default: true, note: 'Status stok/aktif dari provider']
+  is_active boolean [not null, default: true, note: 'Saklar manual admin']
+  weight integer [note: 'Untuk strategi weighted']
+  last_synced_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (product_id, provider_id) [unique]
+    (provider_id, provider_sku)
+  }
+}
+
+Table provider_price_histories {
+  id uuid [pk]
+  product_provider_map_id uuid [not null, ref: > product_provider_map.id]
+  old_cost_price bigint
+  new_cost_price bigint [not null]
+  changed_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (product_provider_map_id, changed_at)
+  }
+}
+
+TableGroup provider {
+  providers
+  product_routing
+  product_provider_map
+  provider_price_histories
+}
+
+// ============================================================================
+// MODUL: pricing
+// ============================================================================
+
+Table pricing_rules {
+  id uuid [pk]
+  scope pricing_scope [not null, note: 'Resolusi: product → brand → category → global (global hanya bila kategori tanpa aturan)']
+  scope_id uuid [note: 'id kategori/brand/produk; null bila scope = global (tanpa FK karena polimorfik)']
+  tier_id uuid [ref: > tiers.id, note: 'null = semua tier']
+  margin_type amount_type [not null]
+  margin_value numeric(12,3) [not null, note: 'Rupiah bila FLAT, persen bila PERCENT']
+  min_margin bigint [not null, default: 0, note: 'Batas proteksi rugi (PRC-05)']
+  is_active boolean [not null, default: true]
+  created_by uuid [ref: > users.id]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (scope, scope_id, tier_id) [unique, note: 'Satu aturan per scope+tier. NULL ditangani dengan UNIQUE NULLS NOT DISTINCT (PG15+)']
+  }
+}
+
+TableGroup pricing {
+  pricing_rules
+}
+
+// ============================================================================
+// MODUL: promo
+// ============================================================================
+
+Table promos {
+  id uuid [pk]
+  code varchar(32) [not null, unique, note: 'Disimpan uppercase']
+  name varchar(120) [not null]
+  type amount_type [not null]
+  value numeric(12,3) [not null]
+  max_discount bigint [note: 'Batas diskon untuk tipe PERCENT']
+  min_transaction bigint [not null, default: 0]
+  quota integer [note: 'null = tanpa batas']
+  used_count integer [not null, default: 0]
+  per_user_limit integer [note: 'null = tanpa batas']
+  rules jsonb [not null, default: '{}', note: 'Filter kategori/brand/produk/tier/metode bayar']
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  is_active boolean [not null, default: true]
+  created_by uuid [ref: > users.id]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table promo_usages {
+  id uuid [pk]
+  promo_id uuid [not null, ref: > promos.id]
+  order_id uuid [not null, unique, ref: > orders.id]
+  user_id uuid [ref: > users.id]
+  contact_hash varchar(128) [note: 'Hash email/WA untuk membatasi guest']
+  discount bigint [not null]
+  released_at timestamptz [note: 'Kuota dikembalikan bila order EXPIRED atau REFUNDED']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (promo_id, user_id)
+    (promo_id, contact_hash)
+  }
+}
+
+TableGroup promo {
+  promos
+  promo_usages
+}
+
+// ============================================================================
+// MODUL: payment
+// ============================================================================
+
+Table payment_gateways {
+  id uuid [pk]
+  code varchar(50) [not null, unique, note: 'Sama dengan Code() adapter, mis. xendit']
+  name varchar(100) [not null]
+  mode vendor_mode [not null, default: 'sandbox']
+  credentials_encrypted bytea
+  credentials_key_id varchar(32)
+  is_active boolean [not null, default: false]
+  circuit_state circuit_state [not null, default: 'CLOSED']
+  config jsonb [not null, default: '{}']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table payment_methods {
+  id uuid [pk]
+  code varchar(50) [not null, unique, note: 'QRIS, VA_BCA, OVO, BALANCE, ...']
+  name varchar(100) [not null]
+  group payment_method_group [not null]
+  icon_media_id uuid [ref: > media.id]
+  fee_flat bigint [not null, default: 0]
+  fee_percent numeric(6,3) [not null, default: 0]
+  fee_bearer fee_bearer [not null, default: 'CUSTOMER']
+  fee_customer_share numeric(5,2) [note: 'Wajib bila fee_bearer = SPLIT: persen fee yang dibebankan ke pembeli (0–100), sisanya ditanggung merchant. CHECK 0..100']
+  min_amount bigint [not null, default: 0]
+  max_amount bigint
+  expiry_minutes integer [not null, default: 60, note: 'Sumber tunggal masa berlaku invoice/deposit; juga dikirim sebagai expiry charge ke PG']
+  instructions jsonb [not null, default: '[]', note: 'Langkah pembayaran default']
+  sort_order integer [not null, default: 0]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table payment_method_gateway_map {
+  payment_method_id uuid [not null, ref: > payment_methods.id]
+  gateway_id uuid [not null, ref: > payment_gateways.id]
+  gateway_method_code varchar(64) [not null, note: 'Kode metode di sisi PG, mis. BCAVA']
+  priority integer [not null, default: 1]
+  is_active boolean [not null, default: true]
+
+  indexes {
+    (payment_method_id, gateway_id) [pk]
+  }
+}
+
+Table payments {
+  id uuid [pk]
+  purpose payment_purpose [not null]
+  order_id uuid [ref: > orders.id, note: 'Diisi bila purpose = ORDER']
+  deposit_id uuid [ref: > deposits.id, note: 'Diisi bila purpose = DEPOSIT. CHECK: tepat satu dari order_id/deposit_id terisi']
+  payment_method_id uuid [not null, ref: > payment_methods.id]
+  gateway_id uuid [ref: > payment_gateways.id, note: 'null untuk metode BALANCE']
+  external_id varchar(128) [note: 'ID transaksi di PG']
+  amount bigint [not null, note: 'Nominal yang ditagih ke pembeli']
+  fee bigint [not null, default: 0, note: 'Fee PG']
+  status payment_status [not null, default: 'PENDING']
+  instructions jsonb [note: 'qr_string, va_number, checkout_url, steps']
+  expires_at timestamptz
+  paid_at timestamptz
+  refunded_at timestamptz
+  raw_response jsonb [note: 'Respons create charge (sudah dimasking)']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (gateway_id, external_id) [unique]
+    order_id
+    deposit_id
+    (status, expires_at)
+  }
+}
+
+TableGroup payment {
+  payment_gateways
+  payment_methods
+  payment_method_gateway_map
+  payments
+}
+
+// ============================================================================
+// MODUL: order
+// ============================================================================
+
+Table orders {
+  id uuid [pk]
+  invoice_no varchar(32) [not null, unique, note: 'RC-YYYYMMDD-XXXXXX']
+  source order_source [not null, default: 'WEB']
+  user_id uuid [ref: > users.id, note: 'null = guest']
+  reseller_ref_id varchar(64) [note: 'ref_id dari reseller (H2H). Partial unique (user_id, reseller_ref_id) WHERE source = H2H']
+  product_id uuid [not null, ref: > products.id]
+  product_snapshot jsonb [not null, note: '{sku, name, brand, category} saat order dibuat']
+  target_data jsonb [not null, note: 'Input sesuai input_schema brand']
+  target_display varchar(120) [not null]
+  contact_email varchar(254)
+  contact_whatsapp varchar(20)
+  tier_id uuid [ref: > tiers.id, note: 'Tier yang dipakai menghitung harga']
+  payment_method_id uuid [not null, ref: > payment_methods.id]
+  promo_id uuid [ref: > promos.id]
+  price bigint [not null, note: 'Harga jual produk']
+  estimated_cost bigint [not null, note: 'Modal saat quote']
+  actual_cost bigint [note: 'Modal dari provider yang berhasil']
+  discount bigint [not null, default: 0]
+  fee bigint [not null, default: 0, note: 'Fee yang dibebankan ke pembeli']
+  total bigint [not null, note: 'price - discount + fee']
+  status order_status [not null, default: 'PENDING_PAYMENT']
+  serial_number_encrypted bytea [note: 'SN / kode voucher terenkripsi']
+  serial_number_key_id varchar(32)
+  delivery_message varchar(500)
+  failure_reason varchar(255)
+  refund_destination refund_destination
+  version integer [not null, default: 1, note: 'Optimistic locking']
+  expires_at timestamptz [not null, note: 'created_at + payment_methods.expiry_minutes; sama dengan expiry charge di PG']
+  paid_at timestamptz
+  completed_at timestamptz [note: 'Waktu mencapai SUCCESS/REFUNDED/EXPIRED']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (user_id, created_at)
+    (status, expires_at) [note: 'Job order:expire']
+    (status, updated_at) [note: 'Job fulfillment:poll & antrean manual']
+    product_id
+    created_at
+    contact_email
+    contact_whatsapp
+  }
+}
+
+Table order_status_histories {
+  id uuid [pk]
+  order_id uuid [not null, ref: > orders.id]
+  from_status order_status
+  to_status order_status [not null]
+  actor_type varchar(16) [not null, note: 'system, user, admin, provider, gateway']
+  actor_id uuid [ref: > users.id]
+  reason varchar(255)
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (order_id, created_at)
+  }
+}
+
+TableGroup order {
+  orders
+  order_status_histories
+}
+
+// ============================================================================
+// MODUL: fulfillment
+// ============================================================================
+
+Table order_attempts {
+  id uuid [pk]
+  order_id uuid [not null, ref: > orders.id]
+  attempt_no smallint [not null]
+  provider_id uuid [not null, ref: > providers.id]
+  provider_sku varchar(100) [not null]
+  ref_id varchar(64) [not null, unique, note: 'invoice_no-attempt_no; dikirim ke provider']
+  provider_trx_id varchar(128)
+  cost_price bigint [not null]
+  status attempt_status [not null, default: 'PENDING']
+  error_code varchar(64) [note: 'Kode error internal ternormalisasi']
+  vendor_error_code varchar(64)
+  vendor_message varchar(500)
+  is_retryable boolean
+  request_payload jsonb [note: 'Sudah dimasking']
+  response_payload jsonb [note: 'Sudah dimasking']
+  triggered_by uuid [ref: > users.id, note: 'Diisi bila retry/switch manual oleh admin']
+  latency_ms integer
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (order_id, attempt_no) [unique]
+    (provider_id, created_at)
+    (provider_id, provider_trx_id)
+    (status, created_at)
+  }
+}
+
+TableGroup fulfillment {
+  order_attempts
+}
+
+// ============================================================================
+// MODUL: wallet
+// ============================================================================
+
+Table deposits {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  amount bigint [not null, note: 'Nominal yang masuk ke saldo']
+  status deposit_status [not null, default: 'PENDING']
+  payment_method_id uuid [not null, ref: > payment_methods.id]
+  expires_at timestamptz [not null]
+  paid_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (user_id, created_at)
+    (status, expires_at)
+  }
+}
+
+Table balance_ledger {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  type ledger_type [not null]
+  amount bigint [not null, note: 'Positif = masuk, negatif = keluar']
+  balance_before bigint [not null]
+  balance_after bigint [not null, note: 'CHECK (balance_after >= 0)']
+  reference_type varchar(32) [not null, note: 'order, deposit, adjustment']
+  reference_id uuid [not null]
+  description varchar(255) [not null]
+  actor_id uuid [ref: > users.id, note: 'Diisi untuk ADJUSTMENT manual']
+  reason varchar(255)
+  created_at timestamptz [not null, default: `now()`]
+
+  Note: 'Append-only: tidak ada UPDATE/DELETE (dicabut lewat GRANT). users.balance diperbarui di transaksi yang sama.'
+
+  indexes {
+    (user_id, created_at)
+    (reference_type, reference_id, type) [unique, note: 'Mencegah potong/refund ganda untuk referensi yang sama']
+  }
+}
+
+TableGroup wallet {
+  deposits
+  balance_ledger
+}
+
+// ============================================================================
+// MODUL: reseller
+// ============================================================================
+
+Table api_keys {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  name varchar(100)
+  key_prefix varchar(16) [not null, note: 'Bagian awal yang ditampilkan, mis. pk_live_3f9a']
+  key_hash varchar(128) [not null, unique]
+  secret_encrypted bytea [not null, note: 'Dibutuhkan untuk verifikasi HMAC & tanda tangan callback']
+  secret_key_id varchar(32) [not null]
+  last_used_at timestamptz
+  last_used_ip inet
+  revoked_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    user_id
+  }
+}
+
+Table reseller_settings {
+  user_id uuid [pk, ref: - users.id]
+  callback_url varchar(512)
+  callback_secret_encrypted bytea [note: 'Secret khusus untuk menandatangani callback ke reseller; terpisah dari API key, bisa dirotasi']
+  callback_secret_key_id varchar(32)
+  callback_secret_rotated_at timestamptz
+  ip_whitelist cidr[] [not null, default: '{}']
+  rate_limit_per_minute integer [not null, default: 600]
+  is_h2h_enabled boolean [not null, default: false]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table reseller_callbacks {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  order_id uuid [not null, ref: > orders.id]
+  event varchar(32) [not null, note: 'order.succeeded, order.failed, order.refunded']
+  event_id varchar(64) [not null, unique]
+  url varchar(512) [not null]
+  payload jsonb [not null]
+  status delivery_status [not null, default: 'QUEUED']
+  attempts smallint [not null, default: 0]
+  last_http_status smallint
+  last_error varchar(500)
+  next_retry_at timestamptz
+  delivered_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (user_id, created_at)
+    (status, next_retry_at)
+  }
+}
+
+TableGroup reseller {
+  api_keys
+  reseller_settings
+  reseller_callbacks
+}
+
+// ============================================================================
+// MODUL: notification
+// ============================================================================
+
+Table notification_logs {
+  id uuid [pk]
+  channel notification_channel [not null]
+  recipient varchar(254) [not null]
+  template varchar(64) [not null, note: 'order_success, order_failed, deposit_paid, admin_alert, ...']
+  subject varchar(255)
+  payload jsonb [not null]
+  related_type varchar(32) [note: 'order, deposit, user, system']
+  related_id uuid
+  status delivery_status [not null, default: 'QUEUED']
+  attempts smallint [not null, default: 0]
+  provider_message_id varchar(128)
+  last_error varchar(500)
+  sent_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (related_type, related_id)
+    (status, created_at)
+  }
+}
+
+TableGroup notification {
+  notification_logs
+}
+
+// ============================================================================
+// MODUL: report
+// ============================================================================
+
+Table reconciliation_runs {
+  id uuid [pk]
+  target_type reconciliation_target [not null]
+  provider_id uuid [ref: > providers.id]
+  gateway_id uuid [ref: > payment_gateways.id]
+  period_date date [not null]
+  status reconciliation_status [not null, default: 'RUNNING']
+  total_internal integer
+  total_external integer
+  mismatch_count integer
+  triggered_by uuid [ref: > users.id, note: 'null = terjadwal']
+  started_at timestamptz [not null, default: `now()`]
+  finished_at timestamptz
+  error varchar(500)
+
+  indexes {
+    (target_type, period_date)
+  }
+}
+
+Table reconciliation_items {
+  id uuid [pk]
+  run_id uuid [not null, ref: > reconciliation_runs.id]
+  type reconciliation_item_type [not null]
+  reference varchar(128) [not null, note: 'ref_id / external_id']
+  order_id uuid [ref: > orders.id]
+  internal_data jsonb
+  external_data jsonb
+  resolved_at timestamptz
+  resolved_by uuid [ref: > users.id]
+  resolution_note varchar(500)
+
+  indexes {
+    run_id
+    (resolved_at)
+  }
+}
+
+TableGroup report {
+  reconciliation_runs
+  reconciliation_items
+}
+
+// ============================================================================
+// MODUL: audit
+// ============================================================================
+
+Table audit_logs {
+  id uuid [pk]
+  actor_id uuid [ref: > users.id, note: 'null = system']
+  actor_roles "varchar(64)[]" [note: 'Snapshot role saat aksi']
+  action varchar(64) [not null, note: 'order.refund, role.update_permissions, ...']
+  entity varchar(64) [not null]
+  entity_id varchar(64)
+  reason varchar(500)
+  before jsonb
+  after jsonb
+  ip inet
+  user_agent varchar(512)
+  request_id varchar(64)
+  created_at timestamptz [not null, default: `now()`]
+
+  Note: 'Append-only. Partisi bulanan berdasarkan created_at disarankan saat volume besar.'
+
+  indexes {
+    (actor_id, created_at)
+    (entity, entity_id)
+    (action, created_at)
+    created_at
+  }
+}
+
+TableGroup audit {
+  audit_logs
+}
+
+// ============================================================================
+// MODUL: setting
+// ============================================================================
+
+Table settings {
+  key varchar(100) [pk, note: 'min_deposit, maintenance_mode, payment_recheck_threshold (default 1000000), cs_contact, admin_alert_whatsapp, kirimdev_api_key (secret), ...']
+  value jsonb [not null]
+  is_secret boolean [not null, default: false, note: 'Nilai disamarkan di respons API']
+  description varchar(255)
+  updated_by uuid [ref: > users.id]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+TableGroup setting {
+  settings
+}
+
+// ============================================================================
+// PLATFORM (shared kernel)
+// ============================================================================
+
+Table webhook_events {
+  id uuid [pk]
+  source_type webhook_source_type [not null]
+  source_code varchar(50) [not null, note: 'Kode PG / provider']
+  event_id varchar(191) [not null, note: 'ID event dari vendor (atau hash payload bila vendor tidak menyediakan)']
+  headers jsonb
+  payload jsonb [not null]
+  ip inet
+  signature_valid boolean [not null]
+  processed_at timestamptz
+  process_error varchar(500)
+  received_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (source_type, source_code, event_id) [unique]
+    received_at
+  }
+}
+
+Table outbox_events {
+  id uuid [pk, note: 'Sekaligus event_id untuk idempotensi konsumen']
+  module varchar(32) [not null]
+  event_type varchar(64) [not null, note: 'payment.paid, order.succeeded, ...']
+  aggregate_type varchar(32) [not null]
+  aggregate_id uuid [not null]
+  payload jsonb [not null]
+  status outbox_status [not null, default: 'PENDING']
+  attempts smallint [not null, default: 0]
+  last_error varchar(500)
+  available_at timestamptz [not null, default: `now()`]
+  published_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (status, available_at) [note: 'Partial index WHERE status = PENDING']
+    (aggregate_type, aggregate_id)
+  }
+}
+
+Table idempotency_keys {
+  scope varchar(64) [not null, note: 'endpoint + user_id/api_key/ip']
+  key varchar(128) [not null]
+  request_hash varchar(128) [not null]
+  response_status smallint
+  response_body jsonb
+  locked_until timestamptz [note: 'Mencegah request paralel dengan key sama']
+  expires_at timestamptz [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (scope, key) [pk]
+    expires_at
+  }
+}
+
+TableGroup platform {
+  webhook_events
+  outbox_events
+  idempotency_keys
+}
