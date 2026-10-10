@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: RaCash API
-  version: 0.3.0
+  version: 0.4.0
   summary: Website top-up multi provider & multi payment gateway
   description: |
-    Dihasilkan dari `API_CONTRACT.md` v0.3. Bila berbeda, `API_CONTRACT.md` yang berlaku
+    Dihasilkan dari `API_CONTRACT.md` v0.4. Bila berbeda, `API_CONTRACT.md` yang berlaku
     dan file ini wajib diperbarui.
 
     Konvensi:
@@ -3186,7 +3186,7 @@ paths:
     get:
       tags: [System]
       operationId: metrics
-      description: Prometheus; hanya dari jaringan internal.
+      description: Prometheus. Hanya dilayani di port internal METRICS_ADDR (default :9090), tidak di host API publik.
       responses:
         '200':
           description: OK
