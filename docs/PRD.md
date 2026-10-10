@@ -193,7 +193,7 @@ Satu `order` bisa punya banyak `order_attempt`; setiap attempt memakai `ref_id` 
 - **Backend:** Go + GoFiber, GORM, JWT auth — **Modular Architecture (modular monolith)**: setiap domain (auth, rbac, catalog, pricing, provider, payment, order, fulfillment, wallet, dst.) adalah modul mandiri dengan layer handler/service/repository berbasis interface, berkomunikasi lewat kontrak publik dan domain event. Detail di `ARCHITECTURE.md`.
 - **Database:** PostgreSQL.
 - **Cache & antrean:** Redis (cache harga/produk, rate limit, distributed lock) + worker queue (mis. Asynq) untuk fulfillment, polling status, sinkronisasi harga.
-- **Frontend:** Nuxt 4.6.0 (Vue 3, TypeScript), mobile-first. Dipecah per Nuxt Layer (core, storefront, account, admin); storefront di-render SSR/SWR untuk SEO, panel admin client-side. Nuxt server (Nitro) berperan sebagai BFF untuk menyimpan token di cookie httpOnly.
+- **Frontend:** Nuxt 4.6.1 (Vue 3, TypeScript), mobile-first. Dipecah per Nuxt Layer (core, storefront, account, admin); storefront di-render SSR/SWR untuk SEO, panel admin client-side. Nuxt server (Nitro) berperan sebagai BFF untuk menyimpan token di cookie httpOnly.
 - **Alur kerja:** DBML schema → kontrak OpenAPI → implementasi.
 
 ### 5.2 Interface inti (gambaran)
@@ -525,7 +525,7 @@ Detail request/response ada di `API_CONTRACT.md` (sumber untuk `openapi.yaml`).
 
 ## 13. Open Questions
 
-1. ~~Frontend~~ — **diputuskan:** Nuxt 4.6.0 (lihat `ARCHITECTURE.md`).
+1. ~~Frontend~~ — **diputuskan:** Nuxt 4.6 (lihat `ARCHITECTURE.md`). Dipakai 4.6.1 karena 4.6.0 gagal merender SSR pada build produksi di Windows.
 2. ~~Late payment setelah `EXPIRED`~~ — **direvisi:** tidak ada late payment; charge di PG kedaluwarsa bersamaan dengan order sehingga PG menolak pembayaran (lihat 4.2).
 3. ~~Refund guest tanpa akun saldo~~ — **diputuskan:** pembeli menghubungi admin; refund diproses manual (PAY-07).
 4. ~~Provider & PG untuk MVP~~ — **diputuskan:** Digiflazz & Xendit (satu masing-masing).

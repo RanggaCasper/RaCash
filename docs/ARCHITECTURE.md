@@ -14,7 +14,7 @@ Sistem terdiri dari dua aplikasi utama dan dua proses pendukung:
 
 | Komponen | Teknologi | Peran |
 |---|---|---|
-| **Frontend** | Nuxt 4.6.0 (Vue 3, TypeScript) | Storefront (SSR/SWR), area member, panel admin; Nitro sebagai BFF |
+| **Frontend** | Nuxt 4.6.1 (Vue 3, TypeScript) | Storefront (SSR/SWR), area member, panel admin; Nitro sebagai BFF |
 | **API** | Go, GoFiber, GORM | REST API, webhook PG, callback provider, API H2H reseller |
 | **Worker** | Go (binary yang sama, entrypoint berbeda) | Fulfillment, polling status, sinkronisasi harga, rekonsiliasi, notifikasi, outbox relay |
 | **Data** | PostgreSQL, Redis, object storage S3-compatible | Penyimpanan utama; cache, lock, rate limit, antrean (Asynq); file media |
@@ -339,7 +339,7 @@ Semua konfigurasi dari environment variable (12-factor), dibaca sekali saat star
 
 ---
 
-## 3. Frontend — Nuxt 4.6.0
+## 3. Frontend — Nuxt 4.6.1
 
 ### 3.1 Prinsip
 - **Nuxt Layers** untuk memecah frontend sesuai area, sejalan dengan modularitas backend.
@@ -396,13 +396,19 @@ Stack pendukung (rekomendasi): Pinia, Tailwind CSS + Nuxt UI, VeeValidate + Zod,
 
 ```
 Browser ──POST /api/auth/login──▶ Nitro ──POST /api/v1/auth/login──▶ Go API
-        ◀── Set-Cookie: at (httpOnly, 15m), rt (httpOnly, path=/api/auth, 30 hari) ──
+        ◀── Set-Cookie: at (httpOnly, sisa umur token), rt (httpOnly, 30 hari), rc_session=1 ──
 Browser ──GET /api/me/orders (cookie)──▶ Nitro ──Authorization: Bearer at──▶ Go API
+                                         ├─ cookie at habis tapi rt ada → refresh dulu
                                          └─ jika 401 TOKEN_EXPIRED → refresh sekali → ulangi
 ```
-- Cookie: `HttpOnly`, `Secure`, `SameSite=Lax`.
-- CSRF: request non-GET ke `/api/**` wajib `Origin` sama dengan domain situs.
-- Endpoint publik (katalog) saat SSR dipanggil Nitro langsung ke Go API melalui jaringan internal.
+- Cookie `at` & `rt`: `HttpOnly`, `Secure`, `SameSite=Lax`, `path=/`. `rt` sengaja `path=/` (bukan `/api/auth`) agar SSR halaman privat (`/akun/**`) dan proxy `/api/**` bisa me-refresh token secara transparan.
+- `rc_session=1` adalah penanda **non-httpOnly tanpa isi rahasia**: client memakainya untuk melewati panggilan `/me` saat jelas belum login.
+- Refresh dikerjakan BFF dengan *single-flight*. Refresh token dirotasi dan pemakaian ulang token lama mencabut sesi, jadi request paralel berbagi satu panggilan refresh, dan hasil rotasi di-cache 30 detik untuk request yang masih membawa `rt` lama.
+- Respons login/refresh dari Go API tidak pernah diteruskan apa adanya: token dipindah ke cookie dan dihapus dari body. Proxy generik menolak path `auth/login`, `auth/login/2fa`, `auth/refresh`, `auth/logout`, `webhooks/**`, `h2h/**`.
+- Proxy hanya meneruskan header yang di-allowlist (tanpa `Cookie` dan `Authorization` dari browser) dan menambahkan `X-Forwarded-For` berisi IP pembeli. Go API wajib mempercayai header ini **hanya** dari BFF, agar rate limit per IP tetap berlaku.
+- CSRF: request non-GET ke `/api/**` wajib `Origin` (atau `Referer`) sama dengan host situs atau terdaftar di `NUXT_ALLOWED_ORIGINS`.
+- Halaman ber-cache SWR (`/`, `/g/**`) **tidak boleh** merender data user di server: status login dimuat di client (`plugins/auth.client.ts`), dan menu akun dibungkus `<ClientOnly>`.
+- Endpoint publik (katalog) saat SSR dipanggil lewat handler BFF di proses yang sama, yang meneruskannya ke Go API melalui jaringan internal (`NUXT_API_BASE`).
 - Webhook PG, callback provider, dan API H2H **tidak** lewat Nuxt — langsung ke `api.domain`.
 
 ### 3.5 RBAC di frontend
