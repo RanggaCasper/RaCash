@@ -1,6 +1,6 @@
 // ============================================================================
 // RaCash — Database Schema (PostgreSQL)
-// Versi   : 0.2 (Draft) — 10 Oktober 2026
+// Versi   : 0.3 (Draft) — 11 Oktober 2026
 // Terkait : PRD.md v0.5, ARCHITECTURE.md v0.3, API_CONTRACT.md v0.4
 //
 // Konvensi:
@@ -11,6 +11,8 @@
 // - Satu TableGroup = satu modul. Hanya modul pemilik yang boleh menulis tabelnya.
 // - Partial index/unique ditulis di note (DBML tidak mendukung WHERE) dan
 //   wajib dibuat di file migrasi SQL.
+// - Data bawaan (tier, role sistem, katalog permission, kategori dasar)
+//   di-seed dari kode oleh `cmd/migrate up`, bukan dari file migrasi.
 // ============================================================================
 
 Project racash {
@@ -186,7 +188,7 @@ Table tiers {
   code varchar(32) [not null, unique, note: 'GUEST, MEMBER, RESELLER_SILVER, RESELLER_GOLD, RESELLER_PLATINUM. Tier RESELLER_* hanya untuk pemegang role reseller; assign role reseller → tier RESELLER_SILVER, cabut → MEMBER']
   name varchar(64) [not null]
   rank smallint [not null, default: 0, note: 'Urutan tier; makin tinggi makin murah']
-  is_default boolean [not null, default: false, note: 'Tier untuk member baru']
+  is_default boolean [not null, default: false, note: 'Tier untuk member baru. Partial unique WHERE is_default: hanya satu tier default']
   auto_upgrade_min_volume bigint [note: 'Volume transaksi 30 hari untuk upgrade otomatis (P1); null = manual']
   created_at timestamptz [not null, default: `now()`]
   updated_at timestamptz [not null, default: `now()`]
@@ -331,7 +333,7 @@ Table roles {
 
 Table permissions {
   id uuid [pk]
-  code varchar(100) [not null, unique, note: 'resource:action, mis. orders:refund. Hanya dari seed, tidak via UI']
+  code varchar(100) [not null, unique, note: 'resource:action, mis. orders:refund. Hanya dari seed, tidak via UI. CHECK: code = gabungan resource dan action dengan titik dua']
   resource varchar(50) [not null]
   action varchar(50) [not null]
   description varchar(255) [not null]
@@ -514,7 +516,7 @@ Table providers {
 Table product_routing {
   product_id uuid [pk, ref: - products.id]
   strategy routing_strategy [not null, default: 'cheapest']
-  max_attempts smallint [not null, default: 3, note: 'Maks. jumlah provider BERBEDA yang dicoba; error retryable tidak diulang ke provider yang sama']
+  max_attempts smallint [not null, default: 3, note: 'Maks. jumlah provider BERBEDA yang dicoba; error retryable tidak diulang ke provider yang sama. CHECK (max_attempts >= 1)']
   updated_by uuid [ref: > users.id]
   updated_at timestamptz [not null, default: `now()`]
 }
@@ -564,7 +566,7 @@ TableGroup provider {
 Table pricing_rules {
   id uuid [pk]
   scope pricing_scope [not null, note: 'Resolusi: product → brand → category → global (global hanya bila kategori tanpa aturan)']
-  scope_id uuid [note: 'id kategori/brand/produk; null bila scope = global (tanpa FK karena polimorfik)']
+  scope_id uuid [note: 'id kategori/brand/produk; null bila scope = global (tanpa FK karena polimorfik). CHECK: null jika dan hanya jika scope = global']
   tier_id uuid [ref: > tiers.id, note: 'null = semua tier']
   margin_type amount_type [not null]
   margin_value numeric(12,3) [not null, note: 'Rupiah bila FLAT, persen bila PERCENT']
@@ -658,7 +660,7 @@ Table payment_methods {
   fee_customer_share numeric(5,2) [note: 'Wajib bila fee_bearer = SPLIT: persen fee yang dibebankan ke pembeli (0–100), sisanya ditanggung merchant. CHECK 0..100']
   min_amount bigint [not null, default: 0]
   max_amount bigint
-  expiry_minutes integer [not null, default: 60, note: 'Sumber tunggal masa berlaku invoice/deposit; juga dikirim sebagai expiry charge ke PG']
+  expiry_minutes integer [not null, default: 60, note: 'Sumber tunggal masa berlaku invoice/deposit; juga dikirim sebagai expiry charge ke PG. CHECK (expiry_minutes > 0)']
   instructions jsonb [not null, default: '[]', note: 'Langkah pembayaran default']
   sort_order integer [not null, default: 0]
   is_active boolean [not null, default: true]
@@ -682,7 +684,7 @@ Table payments {
   id uuid [pk]
   purpose payment_purpose [not null]
   order_id uuid [ref: > orders.id, note: 'Diisi bila purpose = ORDER']
-  deposit_id uuid [ref: > deposits.id, note: 'Diisi bila purpose = DEPOSIT. CHECK: tepat satu dari order_id/deposit_id terisi']
+  deposit_id uuid [ref: > deposits.id, note: 'Diisi bila purpose = DEPOSIT. CHECK: tepat satu dari order_id/deposit_id terisi, sesuai purpose']
   payment_method_id uuid [not null, ref: > payment_methods.id]
   gateway_id uuid [ref: > payment_gateways.id, note: 'null untuk metode BALANCE']
   external_id varchar(128) [note: 'ID transaksi di PG']
@@ -736,7 +738,7 @@ Table orders {
   actual_cost bigint [note: 'Modal dari provider yang berhasil']
   discount bigint [not null, default: 0]
   fee bigint [not null, default: 0, note: 'Fee yang dibebankan ke pembeli']
-  total bigint [not null, note: 'price - discount + fee']
+  total bigint [not null, note: 'price - discount + fee. CHECK (total = price - discount + fee)']
   status order_status [not null, default: 'PENDING_PAYMENT']
   serial_number_encrypted bytea [note: 'SN / kode voucher terenkripsi']
   serial_number_key_id varchar(32)
@@ -766,7 +768,7 @@ Table order_status_histories {
   order_id uuid [not null, ref: > orders.id]
   from_status order_status
   to_status order_status [not null]
-  actor_type varchar(16) [not null, note: 'system, user, admin, provider, gateway']
+  actor_type varchar(16) [not null, note: 'system, user, admin, provider, gateway (CHECK)']
   actor_id uuid [ref: > users.id]
   reason varchar(255)
   created_at timestamptz [not null, default: `now()`]
@@ -825,7 +827,7 @@ TableGroup fulfillment {
 Table deposits {
   id uuid [pk]
   user_id uuid [not null, ref: > users.id]
-  amount bigint [not null, note: 'Nominal yang masuk ke saldo']
+  amount bigint [not null, note: 'Nominal yang masuk ke saldo. CHECK (amount > 0)']
   status deposit_status [not null, default: 'PENDING']
   payment_method_id uuid [not null, ref: > payment_methods.id]
   expires_at timestamptz [not null]
@@ -845,7 +847,7 @@ Table balance_ledger {
   type ledger_type [not null]
   amount bigint [not null, note: 'Positif = masuk, negatif = keluar']
   balance_before bigint [not null]
-  balance_after bigint [not null, note: 'CHECK (balance_after >= 0)']
+  balance_after bigint [not null, note: 'CHECK (balance_after >= 0) dan CHECK (balance_after = balance_before + amount)']
   reference_type varchar(32) [not null, note: 'order, deposit, adjustment']
   reference_id uuid [not null]
   description varchar(255) [not null]
@@ -853,7 +855,7 @@ Table balance_ledger {
   reason varchar(255)
   created_at timestamptz [not null, default: `now()`]
 
-  Note: 'Append-only: tidak ada UPDATE/DELETE (dicabut lewat GRANT). users.balance diperbarui di transaksi yang sama.'
+  Note: 'Append-only: REVOKE UPDATE, DELETE, TRUNCATE FROM PUBLIC, ditambah trigger yang menolak UPDATE/DELETE/TRUNCATE (berlaku juga untuk pemilik tabel). users.balance diperbarui di transaksi yang sama.'
 
   indexes {
     (user_id, created_at)
@@ -1024,7 +1026,7 @@ Table audit_logs {
   request_id varchar(64)
   created_at timestamptz [not null, default: `now()`]
 
-  Note: 'Append-only. Partisi bulanan berdasarkan created_at disarankan saat volume besar.'
+  Note: 'Append-only: REVOKE UPDATE, DELETE, TRUNCATE FROM PUBLIC, ditambah trigger yang menolak UPDATE/DELETE/TRUNCATE. Partisi bulanan berdasarkan created_at disarankan saat volume besar.'
 
   indexes {
     (actor_id, created_at)

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RaCash is a top-up website for digital products (game currency, vouchers, pulsa, data, PLN, e-wallet) that is multi-provider and multi-payment-gateway. Specs live in `docs/` and are written in Indonesian; keep doc edits in Indonesian. Work is tracked as GitHub issues grouped by milestone M0–M4 (PRD §11).
 
-- `topup-backend/` (Go 1.25, Fiber v2, GORM, Redis, Asynq): the platform kernel and app wiring exist, but no domain modules yet. Its README covers setup and module conventions.
+- `topup-backend/` (Go 1.25, Fiber v2, GORM, Redis, Asynq): the platform kernel, app wiring, the full schema (migrations 0001–0018), GORM models for every module (`internal/modules/<m>/internal/repository/model.go`), and seeds exist. No module services, handlers, or `app.Module` implementations yet. Its README covers setup and module conventions.
 - `topup-frontend/` (Nuxt 4.6.0): not started. The planned layout is in ARCHITECTURE §3.2.
 
 ## Commands (run in `topup-backend/`)
@@ -17,7 +17,7 @@ go test ./...                                          # unit + architecture che
 go test -run TestPercentOf ./internal/platform/money   # single test
 go test ./test/arch/...                                # module-boundary rules only
 TEST_DB_HOST=... TEST_DB_USER=... TEST_DB_NAME=... go test -count=1 ./test/integration/...  # migrated Postgres; skipped without TEST_DB_NAME
-go run ./cmd/migrate up | down N | version | force V | create <modul>_<deskripsi>
+go run ./cmd/migrate up | seed | down N|all | version | force V | create <modul>_<deskripsi>   # up also runs the seed
 make keygen | make keygen-rotate ID=k2   # generate ENCRYPTION_KEYS (rotation keeps old keys)
 go run ./cmd/api      # :8080 public, :9090 /metrics (internal only)
 go run ./cmd/worker   # Asynq server + scheduler + outbox relay
@@ -27,9 +27,9 @@ The API and worker need these variables (see `.env.example`):
 - Database: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`. These are separate variables, not a single URL; `config.Database.URL()` builds the escaped DSN.
 - `REDIS_URL`, `ENCRYPTION_KEYS`, and `ENCRYPTION_ACTIVE_KEY_ID`.
 
-Integration tests read the same fields with a `TEST_` prefix.
+Integration tests read the same fields with a `TEST_` prefix. Each module's `internal/repository/model_test.go` also needs them: it checks that the GORM models match the migrated tables.
 
-In `APP_ENV=local`, `migrate up`, the API, and the worker create `DB_NAME` if it is missing (`database.EnsureExists`, which goes through `DB_MAINTENANCE_NAME`). Elsewhere this only happens with `DB_AUTO_CREATE=true`. CI is `.github/workflows/backend.yml`: tidy check, vet, migrate up/down/up, and `go test -race` against Postgres 17.
+In `APP_ENV=local`, `migrate up`, the API, and the worker create `DB_NAME` if it is missing (`database.EnsureExists`, which goes through `DB_MAINTENANCE_NAME`). Elsewhere this only happens with `DB_AUTO_CREATE=true`. CI is `.github/workflows/backend.yml`: tidy check, vet, migrate up/down/up (`up` also seeds), and `go test -race` against Postgres 17.
 
 ## Documents and how they relate
 
@@ -85,4 +85,5 @@ Each doc has a version in its header, and the docs cite each other's versions. W
 - **Transactions:** repositories take `uow.DBProvider` and call `DB(ctx)`. Services wrap a use case in `uow.Tx.Do`. `event.Outbox.Publish` returns `ErrNotInTx` outside a transaction, by design.
 - **Errors:** handlers return `*errs.Error`, and any other error is rendered as `INTERNAL_ERROR` with the message hidden. `httpx.AccessLog` renders errors itself so that metrics see the final status. Keep the middleware order in `internal/app/http.go`: request id → metrics → access log → recover.
 - **Idempotency:** `idempotency_keys.response_body` stores the body as a JSON *string* inside `jsonb`. `jsonb` reorders keys, and replays must be byte-identical. Only responses below 400 are stored; errors release the key.
+- **GORM models:** they have no `default:` tags, so `Create` sends zero values instead of the DB default (a `false` would otherwise be swapped for `DEFAULT true`). Set every NOT NULL field explicitly. Map Postgres arrays to `database.StringArray` and `numeric` to `money.Percent`, because modules may not import pgx or `database/sql/driver`.
 - **Event delivery:** the outbox relay enqueues one Asynq task per subscriber (`event:<type>:<subscriber>`) with TaskID `<event_id>:<subscriber>` for dedupe.

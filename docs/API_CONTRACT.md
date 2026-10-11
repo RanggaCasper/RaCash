@@ -6,7 +6,7 @@
 |---|---|
 | Versi kontrak | v1 — 0.4 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.3), `database.dbml` (v0.2) |
+| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.3), `database.dbml` (v0.3) |
 | Sumber turunan | `api/openapi.yaml` dibuat dari dokumen ini |
 
 ---

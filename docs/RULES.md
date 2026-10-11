@@ -5,7 +5,7 @@
 | Versi | 0.1 (Draft) |
 | Tanggal | 10 Oktober 2026 |
 | Berlaku untuk | Semua kode, migrasi, dokumen, dan review di proyek RaCash |
-| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.3), `API_CONTRACT.md` (v0.4), `database.dbml` (v0.2), `openapi.yaml` (0.4.0) |
+| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.3), `API_CONTRACT.md` (v0.4), `database.dbml` (v0.3), `openapi.yaml` (0.4.0) |
 
 Kata **WAJIB** / **DILARANG** bersifat mengikat; pelanggaran harus diperbaiki sebelum merge. **Sebaiknya** = default yang boleh disimpangi dengan alasan tertulis di PR. Aturan bertanda *(usulan)* belum diputuskan pemilik produk.
 
