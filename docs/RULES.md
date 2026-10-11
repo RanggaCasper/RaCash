@@ -2,7 +2,7 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi | 0.1 (Draft) |
+| Versi | 0.2 (Draft) |
 | Tanggal | 10 Oktober 2026 |
 | Berlaku untuk | Semua kode, migrasi, dokumen, dan review di proyek RaCash |
 | Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.5), `API_CONTRACT.md` (v0.6), `database.dbml` (v0.3), `openapi.yaml` (0.6.0) |
@@ -114,6 +114,7 @@ Kata **WAJIB** / **DILARANG** bersifat mengikat; pelanggaran harus diperbaiki se
 4. Menu dan tombol memakai `useCan` / `v-can` dan `available_actions` dari API. Frontend tidak menentukan otorisasi.
 5. Uang diformat lewat util `core` (rupiah); waktu ditampilkan WIB.
 6. Mode render mengikuti `routeRules` di ARCHITECTURE §3.3; halaman privat tidak boleh di-cache.
+7. **Rute dan nama halaman WAJIB berbahasa Inggris**: path URL, nama file di `pages/`, `layouts/`, dan `middleware/`, serta nama konstanta rute. Contoh: `/login` (bukan `/masuk`), `/register` (bukan `/daftar`), `/account` (bukan `/akun`), `/account/security` (bukan `/akun/keamanan`), `/track` (bukan `/lacak`), `/games/:slug` (bukan `/permainan/:slug`). Satu halaman satu path; **DILARANG** membuat alias path berbahasa Indonesia. Aturan ini hanya untuk identifier dan URL: teks yang dilihat pengguna (judul, label, pesan) tetap berbahasa Indonesia.
 
 ## 7. Keamanan
 
