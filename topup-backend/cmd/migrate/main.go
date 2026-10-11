@@ -1,7 +1,8 @@
 // Command migrate menjalankan migrasi SQL bernomor (golang-migrate).
 //
-//	migrate up              terapkan semua migrasi
-//	migrate down N          batalkan N migrasi terakhir (N wajib)
+//	migrate up              terapkan semua migrasi, lalu jalankan seed
+//	migrate seed            jalankan seed saja (idempoten)
+//	migrate down N|all      batalkan N migrasi terakhir, atau semuanya
 //	migrate version         tampilkan versi saat ini
 //	migrate force V         set versi tanpa menjalankan (pemulihan state dirty)
 //	migrate create NAME     buat pasangan file baru, NAME = <modul>_<deskripsi>
@@ -23,7 +24,13 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
+	"github.com/RanggaCasper/RaCash/topup-backend/internal/modules/catalog"
+	"github.com/RanggaCasper/RaCash/topup-backend/internal/modules/rbac"
+	"github.com/RanggaCasper/RaCash/topup-backend/internal/modules/user"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/config"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/database"
 )
@@ -51,7 +58,7 @@ func run(args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return errors.New("perintah: up | down N | version | force V | create NAME")
+		return errors.New("perintah: up | seed | down N|all | version | force V | create NAME")
 	}
 	if args[0] == "create" {
 		if len(args) != 2 {
@@ -62,6 +69,9 @@ func run(args []string) error {
 	db, err := config.LoadDatabase()
 	if err != nil {
 		return err
+	}
+	if args[0] == "seed" {
+		return seed(db)
 	}
 	if args[0] == "up" && db.AutoCreateEnabled(opt.AppEnv) {
 		log := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -81,9 +91,15 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "up":
-		return ignoreNoChange(m.Up())
+		if err := ignoreNoChange(m.Up()); err != nil {
+			return err
+		}
+		return seed(db)
 	case "down":
-		n, err := intArg(args, "down N")
+		if len(args) == 2 && args[1] == "all" {
+			return ignoreNoChange(m.Down())
+		}
+		n, err := intArg(args, "down N|all")
 		if err != nil {
 			return err
 		}
@@ -108,6 +124,37 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("perintah tidak dikenal: %s", args[0])
 	}
+}
+
+// seed mengisi data bawaan dalam satu transaksi: tier, katalog permission &
+// role sistem, dan kategori dasar (RBAC-01, ARCHITECTURE §2.3). Setiap seeder
+// idempoten, jadi aman dijalankan pada setiap `up`.
+func seed(d config.Database) error {
+	db, err := gorm.Open(postgres.Open(d.URL()), &gorm.Config{
+		Logger:                 gormlogger.Default.LogMode(gormlogger.Warn),
+		NowFunc:                func() time.Time { return time.Now().UTC() },
+		SkipDefaultTransaction: true,
+	})
+	if err != nil {
+		return fmt.Errorf("seed: %w", err)
+	}
+	defer database.Close(db)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, fn := range []func(context.Context, *gorm.DB) error{user.Seed, rbac.Seed, catalog.Seed} {
+			if err := fn(ctx, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println("seed selesai")
+	return nil
 }
 
 // create membuat file NNNN_<modul>_<deskripsi>.{up,down}.sql dengan nomor berikutnya.

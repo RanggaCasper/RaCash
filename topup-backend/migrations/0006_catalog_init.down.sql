@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS banners;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS brands;
+DROP TABLE IF EXISTS categories;
+DROP TYPE IF EXISTS input_field_type;

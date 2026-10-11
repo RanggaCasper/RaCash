@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS staff_invitations;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS tiers;
+DROP TYPE IF EXISTS user_status;

@@ -4,7 +4,7 @@
 |---|---|
 | Versi | 0.3 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.4), `database.dbml` (v0.2) |
+| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.4), `database.dbml` (v0.3) |
 
 ---
 

@@ -46,3 +46,23 @@ func TestFormatIDR(t *testing.T) {
 		}
 	}
 }
+
+func TestPercentSQL(t *testing.T) {
+	cases := []struct {
+		src  any
+		want Percent
+	}{{"2.500", 2500}, {[]byte("100.00"), 100000}, {int64(3), 3000}, {"-0.125", -125}}
+	for _, c := range cases {
+		var p Percent
+		if err := p.Scan(c.src); err != nil || p != c.want {
+			t.Errorf("Scan(%v) = %d, %v; want %d", c.src, p, err, c.want)
+		}
+	}
+	var p Percent
+	if err := p.Scan(1.5); err == nil {
+		t.Error("Scan(float64) harus ditolak")
+	}
+	if v, _ := Percent(2500).Value(); v != "2.5" {
+		t.Errorf("Value() = %v; want 2.5", v)
+	}
+}

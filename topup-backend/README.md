@@ -7,15 +7,16 @@ Backend RaCash: Go 1.25, GoFiber v2, GORM (PostgreSQL), Redis, dan Asynq. Arsite
 ```bash
 cp .env.example .env          # isi DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, REDIS_URL
 make keygen                   # salin 2 baris output (ENCRYPTION_KEYS, ENCRYPTION_ACTIVE_KEY_ID) ke .env
-make migrate-up               # go run ./cmd/migrate up
+make migrate-up               # go run ./cmd/migrate up (migrasi + seed)
 make run-api                  # :8080 (publik), :9090 (/metrics, internal)
 make run-worker               # Asynq worker + scheduler + outbox relay
 ```
 
 | Perintah | Keterangan |
 |---|---|
-| `go run ./cmd/migrate up` | Terapkan semua migrasi |
-| `go run ./cmd/migrate down N` | Batalkan N migrasi terakhir |
+| `go run ./cmd/migrate up` | Terapkan semua migrasi, lalu jalankan seed |
+| `go run ./cmd/migrate seed` | Jalankan seed saja |
+| `go run ./cmd/migrate down N` / `down all` | Batalkan N migrasi terakhir, atau semuanya |
 | `go run ./cmd/migrate version` | Versi skema saat ini |
 | `go run ./cmd/migrate force V` | Pulihkan state dirty |
 | `go run ./cmd/migrate create <modul>_<deskripsi>` | Buat file migrasi bernomor berikutnya |
@@ -36,7 +37,13 @@ TEST_DB_HOST=localhost TEST_DB_USER=racash TEST_DB_PASSWORD=racash TEST_DB_NAME=
   go test -count=1 ./test/integration/...
 ```
 
-Integration test butuh PostgreSQL yang sudah dimigrasi dan memakai variabel `TEST_DB_*` (sengaja terpisah dari `DB_*`, agar database development tidak terisi data test). Tanpa `TEST_DB_NAME`, test tersebut di-skip.
+Integration test butuh PostgreSQL yang sudah dimigrasi dan di-seed, dan memakai variabel `TEST_DB_*` (sengaja terpisah dari `DB_*`, agar database development tidak terisi data test). Tanpa `TEST_DB_NAME`, test tersebut di-skip. Selain `test/integration`, setiap modul punya `internal/repository/model_test.go` yang memastikan model GORM sama dengan tabelnya (kolom dan nullability); test ini juga butuh `TEST_DB_*`.
+
+## Skema & seed
+
+- Satu migrasi `NNNN_<modul>_init` per modul (0002–0018), urut sesuai FK. FK yang menunjuk tabel modul yang dibuat belakangan (mis. `payments.order_id`) ditambahkan oleh migrasi modul tujuan.
+- `balance_ledger` dan `audit_logs` append-only: `REVOKE UPDATE, DELETE, TRUNCATE ... FROM PUBLIC` ditambah trigger penolak, karena `REVOKE` tidak berlaku bagi pemilik tabel.
+- Seed berasal dari kode dan idempoten: tier (`user/internal/domain`), katalog permission dan role sistem dengan matriks awal PRD §7.5 (`rbac/internal/domain`), dan kategori dasar (`catalog/internal/domain`). Seed hanya menambah yang belum ada. Pengecualiannya, deskripsi dan flag sensitif permission selalu mengikuti kode, dan `super_admin` selalu dilengkapi seluruh katalog. Matriks role lain hanya diterapkan saat role pertama kali dibuat.
 
 ## Struktur
 
@@ -44,10 +51,11 @@ Integration test butuh PostgreSQL yang sudah dimigrasi dan memakai variabel `TES
 cmd/{api,worker,migrate}   entrypoint
 internal/app               kontrak Module, registry, bootstrap, server HTTP, worker
 internal/platform          shared kernel tanpa logika bisnis
-internal/modules/<modul>   modul domain (belum ada; mulai issue #4–#10)
+internal/modules/<modul>   modul domain; saat ini baru model GORM + seed (issue #4)
 migrations/                SQL bernomor golang-migrate: NNNN_<modul>_<deskripsi>
 test/arch                  cek arah dependensi, larangan import internal, GORM wajib
 test/integration           test dengan PostgreSQL sungguhan
+test/dbtest                helper test DB: koneksi TEST_DB_* dan cek model ↔ tabel
 ```
 
 ## Menambah modul
