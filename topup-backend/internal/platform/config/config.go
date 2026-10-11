@@ -38,6 +38,14 @@ type Config struct {
 	EncryptionKeys        string `env:"ENCRYPTION_KEYS,required"`
 	EncryptionActiveKeyID string `env:"ENCRYPTION_ACTIVE_KEY_ID,required"`
 
+	// JWT_SECRET: rahasia HMAC untuk access token (HS256), minimal 32 byte.
+	JWTSecret string `env:"JWT_SECRET,required"`
+
+	// Captcha Cloudflare Turnstile untuk endpoint auth publik. Kosong hanya
+	// diizinkan di APP_ENV=local (captcha dimatikan).
+	CaptchaSecret    string `env:"CAPTCHA_SECRET"`
+	CaptchaVerifyURL string `env:"CAPTCHA_VERIFY_URL"`
+
 	WorkerConcurrency  int           `env:"WORKER_CONCURRENCY" envDefault:"10"`
 	OutboxPollInterval time.Duration `env:"OUTBOX_POLL_INTERVAL" envDefault:"1s"`
 	OutboxBatchSize    int           `env:"OUTBOX_BATCH_SIZE" envDefault:"100"`
@@ -53,6 +61,12 @@ func Load() (Config, error) {
 	case EnvLocal, EnvStaging, EnvProduction:
 	default:
 		return c, fmt.Errorf("config: APP_ENV %q tidak dikenal (local|staging|production)", c.AppEnv)
+	}
+	if len(c.JWTSecret) < 32 {
+		return c, fmt.Errorf("config: JWT_SECRET minimal 32 karakter")
+	}
+	if c.CaptchaSecret == "" && !c.IsLocal() {
+		return c, fmt.Errorf("config: CAPTCHA_SECRET wajib di luar APP_ENV=local")
 	}
 	return c, nil
 }

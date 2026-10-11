@@ -49,3 +49,35 @@ func TestLoadDatabaseFromEnv(t *testing.T) {
 		t.Fatalf("default/override salah: %+v", d)
 	}
 }
+
+func TestLoadValidatesAuthSettings(t *testing.T) {
+	base := map[string]string{
+		"DB_USER": "u", "DB_NAME": "n", "REDIS_URL": "redis://x",
+		"ENCRYPTION_KEYS": "k1:x", "ENCRYPTION_ACTIVE_KEY_ID": "k1",
+		"JWT_SECRET": "0123456789abcdef0123456789abcdef",
+	}
+	cases := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{"local tanpa captcha", map[string]string{"APP_ENV": "local"}, false},
+		{"secret JWT terlalu pendek", map[string]string{"APP_ENV": "local", "JWT_SECRET": "pendek"}, true},
+		{"production tanpa captcha", map[string]string{"APP_ENV": "production"}, true},
+		{"production dengan captcha", map[string]string{"APP_ENV": "production", "CAPTCHA_SECRET": "s"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for k, v := range base {
+				t.Setenv(k, v)
+			}
+			for k, v := range c.env {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, c.wantErr)
+			}
+		})
+	}
+}

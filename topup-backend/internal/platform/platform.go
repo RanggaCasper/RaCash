@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/cache"
+	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/captcha"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/clock"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/config"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/crypto"
@@ -42,6 +43,7 @@ type Platform struct {
 	RateLimit   *ratelimit.Limiter
 	Idempotency *idempotency.Store
 	Metrics     *metrics.Metrics
+	Captcha     captcha.Verifier
 }
 
 // New membuka seluruh koneksi infrastruktur.
@@ -65,6 +67,10 @@ func New(cfg config.Config, log *slog.Logger) (*Platform, error) {
 	}
 	clk := clock.Real{}
 	um := uow.New(db)
+	var cv captcha.Verifier = captcha.Disabled{}
+	if cfg.CaptchaSecret != "" {
+		cv = captcha.NewTurnstile(cfg.CaptchaSecret, cfg.CaptchaVerifyURL)
+	}
 	return &Platform{
 		Config:      cfg,
 		Log:         log,
@@ -80,6 +86,7 @@ func New(cfg config.Config, log *slog.Logger) (*Platform, error) {
 		RateLimit:   ratelimit.New(rdb, clk),
 		Idempotency: idempotency.NewStore(db, clk),
 		Metrics:     metrics.New(),
+		Captcha:     cv,
 	}, nil
 }
 

@@ -3,12 +3,11 @@
 package app
 
 import (
-	"time"
-
 	"github.com/gofiber/fiber/v2"
 	"github.com/hibiken/asynq"
 
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/event"
+	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/httpx"
 )
 
 // Module adalah kontrak setiap modul domain (ARCHITECTURE §2.4).
@@ -24,14 +23,15 @@ type Scheduled interface {
 	RegisterSchedules(s *asynq.Scheduler) error
 }
 
-// Middlewares adalah middleware bersama yang bisa dipasang modul per route.
-// Auth & RBAC ditambahkan oleh modul auth/rbac (issue #5, #7).
-type Middlewares struct {
-	// Idempotency(true) mewajibkan header Idempotency-Key (endpoint 🔁).
-	Idempotency func(required bool) fiber.Handler
-	// RateLimitIP membatasi per IP dengan scope tertentu.
-	RateLimitIP func(scope string, limit int, window time.Duration) fiber.Handler
+// Authenticator diimplementasikan modul yang menyediakan middleware Bearer JWT
+// (modul auth). App memasangnya ke Middlewares.Authenticate untuk modul lain.
+type Authenticator interface {
+	Authenticate() fiber.Handler
 }
+
+// Middlewares adalah middleware bersama yang bisa dipasang modul per route.
+// Tipenya ada di httpx supaya modul tidak perlu mengimpor app.
+type Middlewares = httpx.Middlewares
 
 // Base dapat di-embed modul agar cukup mengimplementasikan hook yang dipakai.
 type Base struct{}

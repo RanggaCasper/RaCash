@@ -2,9 +2,9 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi | 0.3 (Draft) |
+| Versi | 0.4 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.4), `database.dbml` (v0.3) |
+| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.5), `database.dbml` (v0.3) |
 
 ---
 
@@ -207,6 +207,8 @@ Pengecekan arah dependensi dijalankan di CI (mis. `go-arch-lint` atau test yang 
 | `order.refunded` | order | notification, reseller |
 | `provider.balance_low` | provider | notification (alert admin) |
 | `provider.circuit_opened` | provider | notification, catalog (nonaktifkan produk bila tak ada provider lain) |
+| `email_verification.requested` | auth | notification (kirim email verifikasi; payload memuat token mentah, berlaku 24 jam) |
+| `password_reset.requested` | auth | notification (kirim email reset password; payload memuat token mentah, berlaku 1 jam) |
 | `rbac.permissions_changed` | rbac | auth (invalidasi cache), audit |
 | `admin.action_performed` | semua modul (aksi admin) | audit |
 
@@ -340,7 +342,7 @@ Mengikuti PRD bagian 7: JWT berisi `sub`, `sid`, `pv` (perm_version); middleware
 | `outbox:relay` | loop terus-menerus | Outbox → Asynq |
 
 ### 2.12 Konfigurasi
-Semua konfigurasi dari environment variable (12-factor), dibaca sekali saat startup ke struct `config.Config`. Rahasia (kunci enkripsi, JWT secret) tidak pernah disimpan di repo. Kredensial vendor disimpan terenkripsi di DB, bukan di env.
+Semua konfigurasi dari environment variable (12-factor), dibaca sekali saat startup ke struct `config.Config`. Rahasia (kunci enkripsi, `JWT_SECRET` minimal 32 karakter, `CAPTCHA_SECRET`) tidak pernah disimpan di repo. `CAPTCHA_SECRET` boleh kosong hanya di `APP_ENV=local` (captcha dimatikan). Kredensial vendor disimpan terenkripsi di DB, bukan di env.
 
 ---
 

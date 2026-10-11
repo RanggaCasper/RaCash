@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
+	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/captcha"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/errs"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/httpx"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/platform/logger"
@@ -74,6 +75,12 @@ func (a *App) HTTP() *fiber.App {
 		RateLimitIP: func(scope string, limit int, window time.Duration) fiber.Handler {
 			return p.RateLimit.Middleware(scope, limit, window, ratelimit.ByIP)
 		},
+		Captcha: captcha.Middleware(p.Captcha),
+	}
+	for _, m := range a.Registry.Modules() {
+		if au, ok := m.(Authenticator); ok {
+			mw.Authenticate = au.Authenticate()
+		}
 	}
 	for _, m := range a.Registry.Modules() {
 		m.RegisterRoutes(srv, mw)

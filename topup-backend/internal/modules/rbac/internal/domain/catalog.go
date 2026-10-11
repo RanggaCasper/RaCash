@@ -176,3 +176,13 @@ func SystemRoles() []Role {
 		},
 	}
 }
+
+// RoleRef adalah ringkasan role yang dimiliki user.
+type RoleRef struct {
+	Code  string
+	Name  string
+	Scope string
+}
+
+// IsInternal menyatakan role staf internal (wajib 2FA).
+func (r RoleRef) IsInternal() bool { return r.Scope == ScopeInternal }
