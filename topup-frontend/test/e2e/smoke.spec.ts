@@ -5,7 +5,8 @@ import { expect, test } from '@playwright/test'
 test('beranda tampil dengan tombol Masuk', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Top up cepat')
-  await expect(page.getByRole('link', { name: 'Masuk' })).toBeVisible()
+  // Desktop: tombol di header; mobile: tab bawah. Keduanya mengarah ke /login.
+  await expect(page.getByRole('link', { name: 'Masuk' }).and(page.locator(':visible')).first()).toHaveAttribute('href', '/login')
 })
 
 test('/account tanpa login diarahkan ke /login dengan redirect', async ({ page }) => {

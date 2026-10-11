@@ -14,6 +14,9 @@ export default defineNuxtConfig({
     allowedOrigins: '',
     public: {
       siteName: 'RaCash',
+      siteLegalName: 'PT RaCash Digital Indonesia',
+      // Nomor WhatsApp CS (internasional tanpa +). Kosong = tombol bantuan disembunyikan.
+      supportWhatsapp: '',
     },
   },
 

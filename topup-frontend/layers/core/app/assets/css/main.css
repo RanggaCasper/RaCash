@@ -4,3 +4,44 @@
 /* Pindai kelas Tailwind di semua layer dan app root. */
 @source "../../../../";
 @source "../../../../../app";
+
+/* Tipografi dari desain (design/public/*.dc.html). @nuxt/fonts mengunduh dan
+   menyajikan keduanya sendiri; tanpa jaringan saat build, jatuh ke font sistem. */
+@theme static {
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Palet desain (tema gelap). Menimpa token semantik Nuxt UI supaya semua
+   komponen (bg-default, bg-muted, border-default, text-muted, ...) ikut. */
+.dark {
+  --ui-bg: #0b0f17;
+  --ui-bg-muted: #121826;
+  --ui-bg-elevated: #1a2233;
+  --ui-bg-accented: #263042;
+  --ui-border: #263042;
+  --ui-border-muted: #1a2233;
+  --ui-border-accented: #3a465c;
+  --ui-text: #c9d0dc;
+  --ui-text-highlighted: #f3f5f9;
+  --ui-text-toned: #dde2ea;
+  --ui-text-muted: #9aa4b5;
+  --ui-text-dimmed: #6b7689;
+  --ui-primary: #38bdf8;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

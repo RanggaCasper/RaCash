@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDateTimeWIB, formatRupiah, maskEmail, maskPhone } from '../../layers/core/app/utils/format'
+import { formatDateTimeWIB, formatRupiah, formatRupiahCompact, formatRupiahTight, maskEmail, maskPhone, userInitials } from '../../layers/core/app/utils/format'
 
 // Intl id-ID memakai spasi non-breaking (U+00A0) setelah "Rp".
 const NBSP = new RegExp(String.fromCharCode(0xa0), 'g')
@@ -39,5 +39,31 @@ describe('masking PII', () => {
   it('menyamarkan email', () => {
     expect(maskEmail('pembeli@example.com')).toBe('pe****@example.com')
     expect(maskEmail('rusak')).toBe('****')
+  })
+})
+
+describe('formatRupiahTight & formatRupiahCompact (header)', () => {
+  it('tanpa spasi setelah Rp', () => {
+    expect(formatRupiahTight(1254300)).toBe('Rp1.254.300')
+    expect(formatRupiahTight(0)).toBe('Rp0')
+  })
+
+  it('menyingkat jutaan, membiarkan angka kecil utuh', () => {
+    expect(formatRupiahCompact(1254300)).toBe('Rp1,25 jt')
+    expect(formatRupiahCompact(2000000)).toBe('Rp2 jt')
+    expect(formatRupiahCompact(125000)).toBe('Rp125.000')
+  })
+})
+
+describe('userInitials', () => {
+  it('mengambil inisial nama depan dan belakang', () => {
+    expect(userInitials('Bagas Wicaksono')).toBe('BW')
+    expect(userInitials('Siti Nur Aini')).toBe('SA')
+  })
+
+  it('satu kata → dua huruf; kosong → ?', () => {
+    expect(userInitials('rangga')).toBe('RA')
+    expect(userInitials('  ')).toBe('?')
+    expect(userInitials(undefined)).toBe('?')
   })
 })

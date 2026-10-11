@@ -2,10 +2,10 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi | 0.2 (Draft) |
+| Versi | 0.3 (Draft) |
 | Tanggal | 10 Oktober 2026 |
 | Berlaku untuk | Semua kode, migrasi, dokumen, dan review di proyek RaCash |
-| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.5), `API_CONTRACT.md` (v0.6), `database.dbml` (v0.3), `openapi.yaml` (0.6.0) |
+| Dokumen terkait | `PRD.md` (v0.6), `ARCHITECTURE.md` (v0.6), `API_CONTRACT.md` (v0.6), `database.dbml` (v0.3), `openapi.yaml` (0.6.0) |
 
 Kata **WAJIB** / **DILARANG** bersifat mengikat; pelanggaran harus diperbaiki sebelum merge. **Sebaiknya** = default yang boleh disimpangi dengan alasan tertulis di PR. Aturan bertanda *(usulan)* belum diputuskan pemilik produk.
 
@@ -110,7 +110,7 @@ Kata **WAJIB** / **DILARANG** bersifat mengikat; pelanggaran harus diperbaiki se
 
 1. Browser **DILARANG** memegang access/refresh token. Semua panggilan lewat BFF Nitro (`/api/**`) dengan cookie httpOnly.
 2. Tipe API **WAJIB** di-generate dari `openapi.yaml` ke `shared/types/api.d.ts`. **DILARANG** menulis tipe respons API secara manual.
-3. Kode dipecah per Nuxt Layer (`core`, `storefront`, `account`, `admin`). Layer fitur hanya bergantung pada `core`.
+3. Kode dipecah per Nuxt Layer (`core`, `storefront`, `account`). Layer fitur hanya bergantung pada `core`. Panel admin **DILARANG** ditambahkan ke `topup-frontend`; admin adalah aplikasi Nuxt terpisah.
 4. Menu dan tombol memakai `useCan` / `v-can` dan `available_actions` dari API. Frontend tidak menentukan otorisasi.
 5. Uang diformat lewat util `core` (rupiah); waktu ditampilkan WIB.
 6. Mode render mengikuti `routeRules` di ARCHITECTURE §3.3; halaman privat tidak boleh di-cache.

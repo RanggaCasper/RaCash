@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 RaCash is a top-up website for digital products (game currency, vouchers, pulsa, data, PLN, e-wallet) that is multi-provider and multi-payment-gateway. Specs live in `docs/` and are written in Indonesian; keep doc edits in Indonesian. Work is tracked as GitHub issues grouped by milestone M0–M4 (PRD §11).
 
 - `topup-backend/` (Go 1.26, Fiber v2, GORM, Redis, Asynq): the platform kernel, app wiring, the full schema (migrations 0001–0018), GORM models for every module (`internal/modules/<m>/internal/repository/model.go`), and seeds exist. Three modules are implemented end to end: `user`, `rbac` (only `RolesOf`/`AssignRole` so far; roles CRUD, `Require`, and `Authorizer` are still to come), and `auth` (register, email verification, login, refresh rotation, sessions, password reset, 2FA TOTP, step-up). The other modules still have only models. Its README covers setup and module conventions.
-- `topup-frontend/` (Nuxt 4.6.1, Nitro BFF): scaffolded. It has the core layer, the auth flow (login, 2FA login, TOTP step-up modal, `/akun/keamanan`), and placeholder pages. Its README covers commands and pitfalls.
+- `topup-frontend/` (Nuxt 4.6.1, Nitro BFF): scaffolded. It has the core layer, the auth flow (login, 2FA login, TOTP step-up modal, `/account/security`), the site layout (header, mobile tab bar, footer, help button) built from the Claude Design references, and placeholder pages. The admin panel is **not** part of this app: it will be a separate Nuxt app in its own directory (PRD §13 item 25), and the storefront BFF does not proxy `/api/admin/**`. Its README covers commands and pitfalls.
+- Design references: `design/public/*.dc.html` (storefront and account pages) and `design/admin/Admin.html` are self-contained bundles exported from Claude Design. To read one, extract the `<script type="__bundler/template">` JSON string; the real markup is after the inlined `@font-face` and icon CSS. Tokens: dark theme, primary `#38BDF8`, surfaces `#0B0F17`/`#121826`/`#1A2233`, border `#263042`, fonts Plus Jakarta Sans and JetBrains Mono, lucide icons.
 - Infra: `docker-compose.yml` at the repo root (see below), CI in `.github/workflows/{backend,frontend,openapi}.yml`.
 
 ## Commands (run in `topup-backend/`)
@@ -52,7 +53,7 @@ npm run gen:api                                 # regenerate shared/types/api.d.
 
 - **Always run `npm run gen:api` after editing `docs/openapi.yaml`, and commit the result.** CI fails on any diff, and an `openapi.yaml` change that reaches `main` breaks every open frontend branch that has not regenerated.
 - `typecheck` does not catch Vue template-structure errors (for example a stray `v-else`); `build` or `test:bff` does.
-- **Route paths and page file names are English** (RULES §6.7): `/login`, `/register`, `/account`, `/account/security`, `/track`, never `/masuk`, `/daftar`, `/akun`, `/lacak`. User-visible text stays Indonesian. Some existing routes and docs (`/masuk`, `/akun`, `/akun/keamanan`, `/lacak`, ARCHITECTURE §3) still use the old Indonesian paths and should be renamed together with their redirects, middleware, tests, and the `SECURITY_PATH` constant; do not add new Indonesian paths.
+- **Route paths and page file names are English** (RULES §6.7): `/login`, `/register`, `/account`, `/account/security`, `/track`, never `/masuk`, `/daftar`, `/akun`, `/lacak`. User-visible text stays Indonesian. Use the `LOGIN_PATH`, `ACCOUNT_PATH`, and `SECURITY_PATH` constants (`layers/core/app/utils/routes.ts`) instead of hardcoding paths.
 - Playwright tests that fill a form must wait for the submit button to be enabled first (it is disabled until hydration), or the fill can be overwritten when the page hydrates.
 
 ## Docker

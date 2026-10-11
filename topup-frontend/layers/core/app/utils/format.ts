@@ -13,6 +13,27 @@ export function formatRupiah(amount: number): string {
   return rupiah.format(amount)
 }
 
+/** 1254300 → "Rp1.254.300" (tanpa spasi; dipakai di header sempit). */
+export function formatRupiahTight(amount: number): string {
+  return formatRupiah(amount).replace(/\s/g, '')
+}
+
+const decimal2 = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 })
+
+/** 1254300 → "Rp1,25 jt"; di bawah sejuta tetap utuh: 125000 → "Rp125.000". */
+export function formatRupiahCompact(amount: number): string {
+  if (Math.abs(amount) >= 1_000_000) return `Rp${decimal2.format(amount / 1_000_000)} jt`
+  return formatRupiahTight(amount)
+}
+
+/** "Bagas Wicaksono" → "BW"; satu kata → dua huruf pertama; kosong → "?". */
+export function userInitials(name: string | null | undefined): string {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  const letters = parts.length === 1 ? parts[0]!.slice(0, 2) : parts[0]!.charAt(0) + parts[parts.length - 1]!.charAt(0)
+  return letters.toUpperCase()
+}
+
 const wibDateTime = new Intl.DateTimeFormat('id-ID', {
   timeZone: 'Asia/Jakarta',
   day: '2-digit',

@@ -12,4 +12,9 @@ export default defineNuxtConfig({
   ui: {
     colorMode: true,
   },
+  // Desain hanya mendefinisikan tema gelap.
+  colorMode: {
+    preference: 'dark',
+    fallback: 'dark',
+  },
 })

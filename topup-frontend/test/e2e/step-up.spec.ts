@@ -41,17 +41,25 @@ async function mockApi(page: Page, opts: { validCode?: string } = {}): Promise<C
   return calls
 }
 
-async function openSecurityPage(page: Page) {
+async function openSecurityPage(page: Page, isMobile: boolean) {
   await page.goto('/')
-  await page.getByRole('link', { name: 'Rangga' }).click()
-  await page.getByRole('link', { name: 'Keamanan akun' }).click()
+  if (isMobile) {
+    // Mobile: tab "Akun" → dashboard → tautan Keamanan akun.
+    await page.getByRole('navigation', { name: 'Navigasi utama' }).getByRole('link', { name: 'Akun' }).click()
+    await page.getByRole('link', { name: 'Keamanan akun' }).click()
+  }
+  else {
+    // Desktop: menu avatar → Keamanan.
+    await page.getByRole('button', { name: 'Menu akun' }).click()
+    await page.getByRole('menuitem', { name: 'Keamanan' }).click()
+  }
   await expect(page.getByRole('heading', { name: 'Keamanan akun' })).toBeVisible()
   await expect(page.getByText('2FA aktif')).toBeVisible()
 }
 
-test('403 STEP_UP_REQUIRED → modal TOTP → request diulang dengan X-Step-Up-Token', async ({ page }) => {
+test('403 STEP_UP_REQUIRED → modal TOTP → request diulang dengan X-Step-Up-Token', async ({ page, isMobile }) => {
   const calls = await mockApi(page)
-  await openSecurityPage(page)
+  await openSecurityPage(page, isMobile)
 
   await page.getByRole('button', { name: 'Matikan 2FA' }).click()
   const dialog = page.getByRole('dialog')
@@ -67,9 +75,9 @@ test('403 STEP_UP_REQUIRED → modal TOTP → request diulang dengan X-Step-Up-T
   expect(calls.disable).toEqual([undefined, 'su_token'])
 })
 
-test('kode salah menampilkan error di modal dan modal tetap terbuka', async ({ page }) => {
+test('kode salah menampilkan error di modal dan modal tetap terbuka', async ({ page, isMobile }) => {
   const calls = await mockApi(page)
-  await openSecurityPage(page)
+  await openSecurityPage(page, isMobile)
 
   await page.getByRole('button', { name: 'Matikan 2FA' }).click()
   const dialog = page.getByRole('dialog')
@@ -80,9 +88,9 @@ test('kode salah menampilkan error di modal dan modal tetap terbuka', async ({ p
   expect(calls.disable).toEqual([undefined]) // belum diulang
 })
 
-test('membatalkan modal tidak menampilkan error dan tidak mengulang request', async ({ page }) => {
+test('membatalkan modal tidak menampilkan error dan tidak mengulang request', async ({ page, isMobile }) => {
   const calls = await mockApi(page)
-  await openSecurityPage(page)
+  await openSecurityPage(page, isMobile)
 
   await page.getByRole('button', { name: 'Matikan 2FA' }).click()
   const dialog = page.getByRole('dialog')
