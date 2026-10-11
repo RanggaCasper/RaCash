@@ -52,6 +52,7 @@ npm run gen:api                                 # regenerate shared/types/api.d.
 
 - **Always run `npm run gen:api` after editing `docs/openapi.yaml`, and commit the result.** CI fails on any diff, and an `openapi.yaml` change that reaches `main` breaks every open frontend branch that has not regenerated.
 - `typecheck` does not catch Vue template-structure errors (for example a stray `v-else`); `build` or `test:bff` does.
+- **Route paths and page file names are English** (RULES §6.7): `/login`, `/register`, `/account`, `/account/security`, `/track`, never `/masuk`, `/daftar`, `/akun`, `/lacak`. User-visible text stays Indonesian. Some existing routes and docs (`/masuk`, `/akun`, `/akun/keamanan`, `/lacak`, ARCHITECTURE §3) still use the old Indonesian paths and should be renamed together with their redirects, middleware, tests, and the `SECURITY_PATH` constant; do not add new Indonesian paths.
 - Playwright tests that fill a form must wait for the submit button to be enabled first (it is disabled until hydration), or the fill can be overwritten when the page hydrates.
 
 ## Docker
