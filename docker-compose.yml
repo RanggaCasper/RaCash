@@ -88,8 +88,12 @@ services:
       timeout: 3s
       retries: 10
 
+  # Opsional (belum dipakai backend): docker compose --profile storage up
+  # Image resmi MinIO tidak lagi tersedia publik; isi MINIO_IMAGE dengan image S3-compatible
+  # yang bisa Anda tarik (mirror sendiri, atau ganti ke image lain).
   minio:
-    image: quay.io/minio/minio:latest
+    profiles: [storage]
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
