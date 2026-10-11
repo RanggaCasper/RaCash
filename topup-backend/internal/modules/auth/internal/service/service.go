@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/modules/auth/internal/domain"
 	"github.com/RanggaCasper/RaCash/topup-backend/internal/modules/auth/internal/repository"
@@ -41,6 +42,8 @@ type Service struct {
 	outbox  *event.Outbox
 	tokens  *token.Issuer
 	limiter *ratelimit.Limiter
+	keyring *crypto.Keyring
+	rdb     *redis.Client
 	clock   clock.Clock
 	log     *slog.Logger
 
@@ -57,6 +60,8 @@ type Deps struct {
 	Outbox  *event.Outbox
 	Tokens  *token.Issuer
 	Limiter *ratelimit.Limiter
+	Keyring *crypto.Keyring
+	Redis   *redis.Client
 	Clock   clock.Clock
 	Log     *slog.Logger
 }
@@ -68,7 +73,8 @@ func New(d Deps) (*Service, error) {
 	}
 	return &Service{
 		repo: d.Repo, users: d.Users, roles: d.Roles, tx: d.Tx, outbox: d.Outbox,
-		tokens: d.Tokens, limiter: d.Limiter, clock: d.Clock, log: d.Log, dummyHash: dummy,
+		tokens: d.Tokens, limiter: d.Limiter, keyring: d.Keyring, rdb: d.Redis,
+		clock: d.Clock, log: d.Log, dummyHash: dummy,
 	}, nil
 }
 
@@ -201,16 +207,15 @@ func (s *Service) Login(ctx context.Context, email, password string, meta domain
 	if err != nil {
 		return domain.LoginResult{}, err
 	}
-	// Alur 2FA (challenge, setup wajib untuk role internal) belum diimplementasikan.
-	// Gagal tertutup: jangan terbitkan token penuh yang seharusnya butuh 2FA.
-	if creds.TwoFactorEnabled || hasInternal(roles) {
-		return domain.LoginResult{}, errs.New(errs.ServiceUnavailable, "Login dengan 2FA belum tersedia.")
+	if creds.TwoFactorEnabled {
+		return s.beginChallenge(ctx, creds.User)
 	}
 
+	// User internal wajib 2FA: tanpa 2FA aktif, token dibatasi ke /auth/2fa/*.
 	var res domain.LoginResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		var err error
-		res, err = s.startSession(ctx, creds.User, roles, meta)
+		res, err = s.startSession(ctx, creds.User, roles, meta, hasInternal(roles))
 		if err != nil {
 			return err
 		}
@@ -229,7 +234,7 @@ func hasInternal(roles []rbac.RoleRef) bool {
 }
 
 // startSession membuat sesi dengan refresh token baru dan menandatangani access token.
-func (s *Service) startSession(ctx context.Context, u user.User, roles []rbac.RoleRef, meta domain.SessionMeta) (domain.LoginResult, error) {
+func (s *Service) startSession(ctx context.Context, u user.User, roles []rbac.RoleRef, meta domain.SessionMeta, restricted bool) (domain.LoginResult, error) {
 	rawRT, hashRT, err := newOneTimeToken(domain.RefreshTokenPrefix)
 	if err != nil {
 		return domain.LoginResult{}, err
@@ -243,11 +248,11 @@ func (s *Service) startSession(ctx context.Context, u user.User, roles []rbac.Ro
 	}); err != nil {
 		return domain.LoginResult{}, err
 	}
-	return s.result(u, roles, sid, rawRT, rtExp)
+	return s.result(u, roles, sid, rawRT, rtExp, restricted)
 }
 
-func (s *Service) result(u user.User, roles []rbac.RoleRef, sid uuid.UUID, rawRT string, rtExp time.Time) (domain.LoginResult, error) {
-	at, atExp, err := s.tokens.Sign(u.ID, sid, u.PermVersion)
+func (s *Service) result(u user.User, roles []rbac.RoleRef, sid uuid.UUID, rawRT string, rtExp time.Time, restricted bool) (domain.LoginResult, error) {
+	at, atExp, err := s.tokens.Sign(u.ID, sid, u.PermVersion, restricted)
 	if err != nil {
 		return domain.LoginResult{}, err
 	}
@@ -258,6 +263,8 @@ func (s *Service) result(u user.User, roles []rbac.RoleRef, sid uuid.UUID, rawRT
 	return domain.LoginResult{
 		Tokens: domain.Tokens{AccessToken: at, AccessExpiresAt: atExp, RefreshToken: rawRT, RefreshExpiresAt: rtExp},
 		User:   domain.AuthUser{ID: u.ID, Name: u.Name, Email: u.Email, Tier: u.TierCode, Roles: codes},
+
+		TwoFactorSetupRequired: restricted,
 	}, nil
 }
 
@@ -302,7 +309,8 @@ func (s *Service) Refresh(ctx context.Context, rawRT string) (domain.LoginResult
 		if err := s.repo.Rotate(ctx, m.Session.ID, oldHash, newHash, exp, now); err != nil {
 			return err
 		}
-		res, err = s.result(u, roles, m.Session.ID, newRT, exp)
+		// Pembatasan dihitung ulang: refresh tidak boleh melonggarkan token terbatas.
+		res, err = s.result(u, roles, m.Session.ID, newRT, exp, hasInternal(roles) && !u.TwoFactorEnabled)
 		return err
 	})
 	switch {
@@ -342,7 +350,11 @@ func (s *Service) Authenticate(ctx context.Context, rawJWT string) (domain.Princ
 	if u.Status == user.StatusSuspended {
 		return domain.Principal{}, errs.New(errs.AccountSuspended, "")
 	}
-	return domain.Principal{UserID: c.UserID, SessionID: c.SessionID, PermVersion: c.PermVersion}, nil
+	// Token terbatas langsung berlaku penuh begitu 2FA aktif, tanpa menunggu refresh.
+	return domain.Principal{
+		UserID: c.UserID, SessionID: c.SessionID, PermVersion: c.PermVersion,
+		Restricted: c.Restricted && !u.TwoFactorEnabled,
+	}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, p domain.Principal) error {

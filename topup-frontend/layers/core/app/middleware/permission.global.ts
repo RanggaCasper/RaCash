@@ -6,6 +6,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   const auth = useAuthStore()
   if (!auth.loaded) await useAuth().fetchSession()
+  if (auth.setupRequired) return navigateTo(SECURITY_PATH)
   if (!auth.user) return navigateTo({ path: '/masuk', query: { redirect: to.fullPath } })
 
   if (!usePermissionsStore().can(permission)) {

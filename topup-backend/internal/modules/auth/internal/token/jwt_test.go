@@ -19,7 +19,7 @@ func TestSignParseRoundTrip(t *testing.T) {
 	iss := NewIssuer(secret, clk)
 	uid, sid := uuid.New(), uuid.New()
 
-	raw, exp, err := iss.Sign(uid, sid, 7)
+	raw, exp, err := iss.Sign(uid, sid, 7, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestSignParseRoundTrip(t *testing.T) {
 func TestParseExpired(t *testing.T) {
 	clk := clock.NewFixed(time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC))
 	iss := NewIssuer(secret, clk)
-	raw, _, _ := iss.Sign(uuid.New(), uuid.New(), 1)
+	raw, _, _ := iss.Sign(uuid.New(), uuid.New(), 1, false)
 	clk.Advance(15*time.Minute + time.Second)
 	if _, err := iss.Parse(raw); !errs.Is(err, errs.TokenExpired) {
 		t.Fatalf("err = %v, want TOKEN_EXPIRED", err)
@@ -48,10 +48,10 @@ func TestParseExpired(t *testing.T) {
 func TestParseRejectsTamperedAndForeignTokens(t *testing.T) {
 	clk := clock.NewFixed(time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC))
 	iss := NewIssuer(secret, clk)
-	raw, _, _ := iss.Sign(uuid.New(), uuid.New(), 1)
+	raw, _, _ := iss.Sign(uuid.New(), uuid.New(), 1, false)
 
 	other := NewIssuer("ffffffffffffffffffffffffffffffff", clk)
-	foreign, _, _ := other.Sign(uuid.New(), uuid.New(), 1)
+	foreign, _, _ := other.Sign(uuid.New(), uuid.New(), 1, false)
 
 	// alg=none dengan claim valid.
 	none, _ := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{
@@ -77,5 +77,19 @@ func TestParseRejectsTamperedAndForeignTokens(t *testing.T) {
 		if _, err := iss.Parse(tok); !errs.Is(err, errs.Unauthenticated) {
 			t.Errorf("%s: err = %v, want UNAUTHENTICATED", name, err)
 		}
+	}
+}
+
+func TestSignRestrictedClaim(t *testing.T) {
+	clk := clock.NewFixed(time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC))
+	iss := NewIssuer(secret, clk)
+	raw, _, _ := iss.Sign(uuid.New(), uuid.New(), 1, true)
+	c, err := iss.Parse(raw)
+	if err != nil || !c.Restricted {
+		t.Fatalf("restricted=%v err=%v", c.Restricted, err)
+	}
+	full, _, _ := iss.Sign(uuid.New(), uuid.New(), 1, false)
+	if c, _ := iss.Parse(full); c.Restricted {
+		t.Fatal("token penuh tidak boleh restricted")
 	}
 }

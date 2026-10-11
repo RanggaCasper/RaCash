@@ -34,11 +34,15 @@ var phonePattern = regexp.MustCompile(`^(\+62|62|0)8[0-9]{8,12}$`)
 type Handler struct {
 	svc *service.Service
 	val *validator.Validator
-	// authenticate memasang Principal ke context request.
+	// authenticate memasang Principal ke context request dan menolak token terbatas.
 	authenticate fiber.Handler
+	// authenticateAny juga menerima token terbatas (setup 2FA, logout).
+	authenticateAny fiber.Handler
+	// stepUp mewajibkan X-Step-Up-Token; dipasang setelah authenticate.
+	stepUp fiber.Handler
 }
 
-func New(svc *service.Service, val *validator.Validator, authenticate fiber.Handler) (*Handler, error) {
+func New(svc *service.Service, val *validator.Validator) (*Handler, error) {
 	if err := val.Engine().RegisterValidation("password", func(fl govalidator.FieldLevel) bool {
 		return domain.ValidPassword(fl.Field().String())
 	}); err != nil {
@@ -49,7 +53,12 @@ func New(svc *service.Service, val *validator.Validator, authenticate fiber.Hand
 	}); err != nil {
 		return nil, err
 	}
-	return &Handler{svc: svc, val: val, authenticate: authenticate}, nil
+	return &Handler{
+		svc: svc, val: val,
+		authenticate:    Authenticate(svc, false),
+		authenticateAny: Authenticate(svc, true),
+		stepUp:          StepUp(svc),
+	}, nil
 }
 
 // Register memasang route di /api/v1.
@@ -60,8 +69,16 @@ func (h *Handler) Register(r fiber.Router, mw httpx.Middlewares) {
 	a.Post("/resend-verification", mw.RateLimitIP("auth_resend", limitMail, limitWindow), mw.Captcha, h.resendVerification)
 	a.Post("/login", mw.RateLimitIP("auth_login", limitLogin, limitWindow), mw.Captcha, h.login)
 	a.Post("/refresh", mw.RateLimitIP("auth_refresh", limitRefresh, limitWindow), h.refresh)
-	a.Post("/logout", h.authenticate, h.logout)
-	a.Post("/logout-all", h.authenticate, h.logoutAll)
+	a.Post("/login/2fa", mw.RateLimitIP("auth_login_2fa", limitLogin, limitWindow), h.login2FA)
+	a.Post("/logout", h.authenticateAny, h.logout)
+	a.Post("/logout-all", h.authenticateAny, h.logoutAll)
+	a.Post("/step-up", h.authenticate, h.stepUpToken)
+
+	tf := a.Group("/2fa", h.authenticateAny)
+	tf.Get("/status", h.twoFactorStatus)
+	tf.Post("/setup", h.twoFactorSetup)
+	tf.Post("/enable", h.twoFactorEnable)
+	tf.Post("/disable", h.stepUp, h.twoFactorDisable) // ★
 	a.Post("/forgot-password", mw.RateLimitIP("auth_forgot", limitMail, limitWindow), mw.Captcha, h.forgotPassword)
 	a.Post("/reset-password", mw.RateLimitIP("auth_reset", limitToken, limitWindow), h.resetPassword)
 
@@ -96,6 +113,15 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required,max=256"`
 }
 
+type login2FARequest struct {
+	ChallengeToken string `json:"challenge_token" validate:"required,max=256"`
+	Code           string `json:"code" validate:"required,max=64"`
+}
+
+type totpCodeRequest struct {
+	Code string `json:"code" validate:"required,len=6,numeric"`
+}
+
 type resetRequest struct {
 	Token       string `json:"token" validate:"required,max=256"`
 	NewPassword string `json:"new_password" validate:"required,password"`
@@ -109,26 +135,38 @@ type authUserResponse struct {
 	Roles []string  `json:"roles"`
 }
 
+// loginResponse adalah LoginResult di openapi: dengan challenge (2FA aktif) hanya
+// field challenge yang terisi; selain itu field token dan user.
 type loginResponse struct {
-	TwoFactorRequired    bool             `json:"two_factor_required"`
-	AccessToken          string           `json:"access_token"`
-	AccessTokenExpiresAt time.Time        `json:"access_token_expires_at"`
-	RefreshToken         string           `json:"refresh_token"`
-	RefreshTokenExpires  time.Time        `json:"refresh_token_expires_at"`
-	User                 authUserResponse `json:"user"`
+	TwoFactorRequired      bool       `json:"two_factor_required"`
+	TwoFactorSetupRequired bool       `json:"two_factor_setup_required,omitempty"`
+	ChallengeToken         string     `json:"challenge_token,omitempty"`
+	ChallengeExpiresAt     *time.Time `json:"challenge_expires_at,omitempty"`
+
+	AccessToken          string            `json:"access_token,omitempty"`
+	AccessTokenExpiresAt *time.Time        `json:"access_token_expires_at,omitempty"`
+	RefreshToken         string            `json:"refresh_token,omitempty"`
+	RefreshTokenExpires  *time.Time        `json:"refresh_token_expires_at,omitempty"`
+	User                 *authUserResponse `json:"user,omitempty"`
 }
 
 func toLoginResponse(r domain.LoginResult) loginResponse {
+	if r.TwoFactorRequired {
+		exp := r.ChallengeExpiresAt.UTC()
+		return loginResponse{TwoFactorRequired: true, ChallengeToken: r.ChallengeToken, ChallengeExpiresAt: &exp}
+	}
 	roles := r.User.Roles
 	if roles == nil {
 		roles = []string{}
 	}
+	atExp, rtExp := r.AccessExpiresAt.UTC(), r.RefreshExpiresAt.UTC()
 	return loginResponse{
-		AccessToken:          r.AccessToken,
-		AccessTokenExpiresAt: r.AccessExpiresAt.UTC(),
-		RefreshToken:         r.RefreshToken,
-		RefreshTokenExpires:  r.RefreshExpiresAt.UTC(),
-		User:                 authUserResponse{ID: r.User.ID, Name: r.User.Name, Email: r.User.Email, Tier: r.User.Tier, Roles: roles},
+		TwoFactorSetupRequired: r.TwoFactorSetupRequired,
+		AccessToken:            r.AccessToken,
+		AccessTokenExpiresAt:   &atExp,
+		RefreshToken:           r.RefreshToken,
+		RefreshTokenExpires:    &rtExp,
+		User:                   &authUserResponse{ID: r.User.ID, Name: r.User.Name, Email: r.User.Email, Tier: r.User.Tier, Roles: roles},
 	}
 }
 

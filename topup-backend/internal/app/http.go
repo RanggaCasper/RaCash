@@ -80,6 +80,7 @@ func (a *App) HTTP() *fiber.App {
 	for _, m := range a.Registry.Modules() {
 		if au, ok := m.(Authenticator); ok {
 			mw.Authenticate = au.Authenticate()
+			mw.StepUp = au.StepUp()
 		}
 	}
 	for _, m := range a.Registry.Modules() {

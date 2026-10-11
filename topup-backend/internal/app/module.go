@@ -27,6 +27,7 @@ type Scheduled interface {
 // (modul auth). App memasangnya ke Middlewares.Authenticate untuk modul lain.
 type Authenticator interface {
 	Authenticate() fiber.Handler
+	StepUp() fiber.Handler
 }
 
 // Middlewares adalah middleware bersama yang bisa dipasang modul per route.

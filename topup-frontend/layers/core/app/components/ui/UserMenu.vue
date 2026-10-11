@@ -7,7 +7,7 @@ const { user, loggedIn, logout } = useAuth()
 <template>
   <div class="flex items-center gap-2">
     <template v-if="loggedIn">
-      <UButton to="/akun" variant="ghost" icon="i-lucide-user" :label="user?.name" />
+      <UButton :to="user ? '/akun' : SECURITY_PATH" variant="ghost" icon="i-lucide-user" :label="user?.name ?? 'Akun'" />
       <UButton v-can="'dashboard:view'" to="/admin" variant="ghost" label="Admin" />
       <UButton variant="outline" label="Keluar" @click="logout" />
     </template>

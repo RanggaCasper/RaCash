@@ -240,7 +240,6 @@ export interface paths {
          * @description - `403 EMAIL_NOT_VERIFIED` bila email belum diverifikasi.
          *     - `two_factor_required: true` → lanjut ke `/auth/login/2fa`.
          *     - `two_factor_setup_required: true` → user internal belum mengaktifkan 2FA; token hanya bisa mengakses `/auth/2fa/*`.
-         *     - Sementara alur 2FA belum ada: user ber-2FA atau ber-role internal mendapat `503 SERVICE_UNAVAILABLE` (gagal tertutup).
          *     - `422 VALIDATION_ERROR` bila captcha kosong/ditolak (`details[].field = X-Captcha-Token`).
          */
         post: operations["login"];
@@ -259,6 +258,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /**
+         * @description Challenge berlaku 5 menit, sekali pakai, hangus setelah 5 kode salah.
+         *     Kode salah → `401 INVALID_CREDENTIALS`; challenge tidak ada/kedaluwarsa → `401 UNAUTHENTICATED`.
+         */
         post: operations["login2fa"];
         delete?: never;
         options?: never;
@@ -347,6 +350,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/2fa/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Boleh dipanggil dengan token terbatas (`two_factor_setup_required`). */
+        get: operations["get2faStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/2fa/setup": {
         parameters: {
             query?: never;
@@ -404,6 +424,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Hanya kode TOTP (recovery code ditolak). Token terikat ke user dan sesi pembuatnya. */
         post: operations["stepUp"];
         delete?: never;
         options?: never;
@@ -2295,6 +2316,25 @@ export interface components {
             permissions: string[];
             perm_version: number;
         };
+        TwoFactorStatus: {
+            enabled: boolean;
+            /** @description Benar untuk user ber-role internal */
+            required: boolean;
+            recovery_codes_remaining: number;
+        };
+        TwoFactorSetup: {
+            /** @description URI otpauth:// untuk QR code */
+            otpauth_url: string;
+            /** @description Secret base32 untuk input manual */
+            secret: string;
+        };
+        RecoveryCodes: {
+            recovery_codes: string[];
+        };
+        StepUpResult: {
+            step_up_token: string;
+            expires_at: components["schemas"]["DateTime"];
+        };
         Session: {
             id?: components["schemas"]["Id"];
             user_agent?: string | null;
@@ -3595,6 +3635,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
         };
     };
     refreshToken: {
@@ -3697,6 +3738,29 @@ export interface operations {
             422: components["responses"]["Unprocessable"];
         };
     };
+    get2faStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Status 2FA */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope"] & {
+                        data?: components["schemas"]["TwoFactorStatus"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
     setup2fa: {
         parameters: {
             query?: never;
@@ -3713,14 +3777,11 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope"] & {
-                        data?: {
-                            otpauth_url: string;
-                            /** @description Untuk input manual */
-                            secret?: string;
-                        };
+                        data?: components["schemas"]["TwoFactorSetup"];
                     };
                 };
             };
+            409: components["responses"]["Conflict"];
         };
     };
     enable2fa: {
@@ -3743,13 +3804,13 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope"] & {
-                        data?: {
-                            recovery_codes: string[];
-                        };
+                        data?: components["schemas"]["RecoveryCodes"];
                     };
                 };
             };
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Unprocessable"];
+            429: components["responses"]["RateLimited"];
         };
     };
     disable2fa: {
@@ -3788,14 +3849,12 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope"] & {
-                        data?: {
-                            step_up_token: string;
-                            expires_at: components["schemas"]["DateTime"];
-                        };
+                        data?: components["schemas"]["StepUpResult"];
                     };
                 };
             };
             422: components["responses"]["Unprocessable"];
+            429: components["responses"]["RateLimited"];
         };
     };
     getMe: {

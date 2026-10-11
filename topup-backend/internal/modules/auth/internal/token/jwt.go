@@ -27,11 +27,14 @@ func NewIssuer(secret string, clk clock.Clock) *Issuer {
 type wire struct {
 	SID string `json:"sid"`
 	PV  int32  `json:"pv"`
+	// Lim membatasi token ke setup 2FA (domain.LimitSetup2FA); kosong = akses penuh.
+	Lim string `json:"lim,omitempty"`
 	jwt.RegisteredClaims
 }
 
-// Sign membuat access token untuk sesi. Mengembalikan token dan waktu kedaluwarsanya.
-func (i *Issuer) Sign(userID, sessionID uuid.UUID, permVersion int32) (string, time.Time, error) {
+// Sign membuat access token untuk sesi. restricted=true membatasi token ke
+// endpoint setup 2FA. Mengembalikan token dan waktu kedaluwarsanya.
+func (i *Issuer) Sign(userID, sessionID uuid.UUID, permVersion int32, restricted bool) (string, time.Time, error) {
 	now := i.clock.Now()
 	exp := now.Add(domain.AccessTokenTTL)
 	w := wire{
@@ -42,6 +45,9 @@ func (i *Issuer) Sign(userID, sessionID uuid.UUID, permVersion int32) (string, t
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(exp),
 		},
+	}
+	if restricted {
+		w.Lim = domain.LimitSetup2FA
 	}
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, w).SignedString(i.secret)
 	return signed, exp, err
@@ -70,7 +76,7 @@ func (i *Issuer) Parse(raw string) (domain.Claims, error) {
 		return domain.Claims{}, errs.New(errs.Unauthenticated, "")
 	}
 	return domain.Claims{
-		UserID: uid, SessionID: sid, PermVersion: w.PV,
+		UserID: uid, SessionID: sid, PermVersion: w.PV, Restricted: w.Lim == domain.LimitSetup2FA,
 		IssuedAt: w.IssuedAt.Time, ExpiresAt: w.ExpiresAt.Time,
 	}, nil
 }

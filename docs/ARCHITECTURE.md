@@ -2,9 +2,9 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi | 0.4 (Draft) |
+| Versi | 0.5 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.5), `database.dbml` (v0.3) |
+| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.6), `database.dbml` (v0.3) |
 
 ---
 
@@ -449,6 +449,8 @@ Browser ──GET /api/me/orders (cookie)──▶ Nitro ──Authorization: Be
 |---|---|---|
 | `cache:catalog:*` | katalog & daftar produk | 5 menit / invalidasi saat update |
 | `rbac:perm:{uid}:{pv}` | permission set user | 1 jam |
+| `auth:2fa:ch:{sha256(token)}` (+ `:att`) | challenge login 2FA dan penghitung percobaannya | 5 menit |
+| `auth:stepup:{sha256(token)}` | token step-up (user + sesi) | 5 menit |
 | `cb:{adapter}` | state circuit breaker | dinamis |
 | `lock:order:{id}` | lock fulfillment | 2 menit |
 | `rl:{scope}:{key}` | rate limit | sesuai jendela |

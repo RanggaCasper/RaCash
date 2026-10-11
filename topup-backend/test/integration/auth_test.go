@@ -93,6 +93,11 @@ func (e *authEnv) flushRateLimits() {
 
 func (e *authEnv) call(method, path string, body any, bearer string) (int, envelope) {
 	e.t.Helper()
+	return e.callHeaders(method, path, body, bearer, nil)
+}
+
+func (e *authEnv) callHeaders(method, path string, body any, bearer string, headers map[string]string) (int, envelope) {
+	e.t.Helper()
 	var rd io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -103,6 +108,9 @@ func (e *authEnv) call(method, path string, body any, bearer string) (int, envel
 	req.Header.Set("User-Agent", "integration-test")
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := e.http.Test(req, 10000)
 	if err != nil {

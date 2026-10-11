@@ -117,6 +117,18 @@ func (r *Repo) SetPasswordHash(ctx context.Context, userID uuid.UUID, hash strin
 	return nil
 }
 
+func (r *Repo) SetTwoFactorEnabled(ctx context.Context, userID uuid.UUID, enabled bool, at time.Time) error {
+	res := r.db.DB(ctx).Model(&User{}).Where("id = ? AND deleted_at IS NULL", userID).
+		Updates(map[string]any{"two_factor_enabled": enabled, "updated_at": at})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errs.New(errs.NotFound, "")
+	}
+	return nil
+}
+
 func (r *Repo) TouchLastLogin(ctx context.Context, userID uuid.UUID, at time.Time) error {
 	return r.db.DB(ctx).Model(&User{}).Where("id = ?", userID).
 		Update("last_login_at", at).Error

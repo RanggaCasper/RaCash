@@ -46,6 +46,8 @@ type Service interface {
 	MarkEmailVerified(ctx context.Context, userID uuid.UUID) error
 	SetPasswordHash(ctx context.Context, userID uuid.UUID, hash string) error
 	RecordLogin(ctx context.Context, userID uuid.UUID) error
+	// SetTwoFactorEnabled menyimpan status 2FA (pemilik rahasia TOTP-nya modul auth).
+	SetTwoFactorEnabled(ctx context.Context, userID uuid.UUID, enabled bool) error
 }
 
 // Seed menambah tier bawaan (GUEST, MEMBER, RESELLER_*) yang belum ada.

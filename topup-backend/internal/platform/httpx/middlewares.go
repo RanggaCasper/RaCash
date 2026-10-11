@@ -18,4 +18,7 @@ type Middlewares struct {
 	Captcha fiber.Handler
 	// Authenticate memverifikasi Bearer JWT beserta sesinya (diisi modul auth).
 	Authenticate fiber.Handler
+	// StepUp mewajibkan X-Step-Up-Token yang valid untuk user yang sama. Dipasang
+	// setelah Authenticate pada endpoint sensitif ★ (diisi modul auth).
+	StepUp fiber.Handler
 }

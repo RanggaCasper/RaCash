@@ -4,9 +4,9 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi kontrak | v1 — 0.5 (Draft) |
+| Versi kontrak | v1 — 0.6 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.4), `database.dbml` (v0.3) |
+| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.5), `database.dbml` (v0.3) |
 | Sumber turunan | `api/openapi.yaml` dibuat dari dokumen ini |
 
 ---
@@ -406,6 +406,7 @@ Publik. Data pribadi disamarkan. Untuk melihat SN/kode voucher lengkap, pembeli 
 | POST | `/auth/logout-all` | Cabut semua sesi |
 | POST | `/auth/forgot-password` | Kirim tautan reset |
 | POST | `/auth/reset-password` | Set password baru |
+| GET | `/auth/2fa/status` | Status 2FA: `enabled`, `required`, `recovery_codes_remaining` (boleh dengan token terbatas) |
 | POST | `/auth/2fa/setup` | Buat secret TOTP (mengembalikan `otpauth_url`) |
 | POST | `/auth/2fa/enable` | Aktifkan 2FA dengan kode pertama; kembalikan recovery codes |
 | POST | `/auth/2fa/disable` ★ | Matikan 2FA |
@@ -418,7 +419,6 @@ Publik. Data pribadi disamarkan. Untuk melihat SN/kode voucher lengkap, pembeli 
 - **Anti-enumerasi**: `resend-verification` dan `forgot-password` selalu `200 { "success": true, "data": null }`, apa pun status emailnya. Login dengan email tidak dikenal dan password salah mengembalikan `401 INVALID_CREDENTIALS` yang sama.
 - **Token sekali pakai**: token verifikasi email (24 jam) dan reset password (1 jam) hanya disimpan sebagai hash. Token yang salah, kedaluwarsa, atau sudah dipakai → `422 VALIDATION_ERROR` dengan `details[].field = "token"`. Reset password berhasil mencabut seluruh sesi user.
 - **Email**: dikirim modul `notification` setelah event `email_verification.requested` / `password_reset.requested` (ARCHITECTURE §2.5); endpoint tidak menunggu pengiriman.
-- **Sementara**: login user yang `two_factor_enabled` atau ber-role internal belum dapat diselesaikan sebelum alur 2FA (§4, `/auth/login/2fa`, `/auth/2fa/*`) selesai; endpoint login menjawab `503 SERVICE_UNAVAILABLE` (gagal tertutup) alih-alih menerbitkan token penuh.
 
 ### 4.1 `POST /auth/register`
 ```json
@@ -468,6 +468,25 @@ Lanjut ke `POST /auth/login/2fa` dengan `{ "challenge_token": "...", "code": "12
 ```json
 { "success": true, "data": { "step_up_token": "su_77ab...", "expires_at": "2026-10-10T14:52:00Z" } }
 ```
+Hanya kode TOTP 6 digit (recovery code ditolak). **422** `VALIDATION_ERROR` (`details[].field = "code"`) bila kode salah atau 2FA belum aktif (`code: two_factor_not_enabled`). Token berlaku 5 menit, dapat dipakai berulang selama itu, dan terikat ke user **dan sesi** yang membuatnya. Endpoint ★ tanpa token yang valid → `403 STEP_UP_REQUIRED`.
+
+### 4.5 Setup 2FA (`/auth/2fa/*`)
+
+- `GET /auth/2fa/status` → `{ "enabled": false, "required": true, "recovery_codes_remaining": 0 }`. `required` benar untuk user ber-role internal.
+- `POST /auth/2fa/setup` → `{ "otpauth_url": "otpauth://totp/RaCash:user@example.com?secret=...", "secret": "JBSWY3DP..." }`. Boleh diulang selama belum di-enable (secret baru menimpa yang lama). **409 `CONFLICT`** bila 2FA sudah aktif.
+- `POST /auth/2fa/enable` `{ "code": "123456" }` → `{ "recovery_codes": ["ABCDE-FGH23", ... 10 kode] }`. Recovery code **hanya ditampilkan sekali**; di server hanya hash-nya. Kode salah → `422`; belum setup → `422` (`code: two_factor_not_set_up`).
+- `POST /auth/2fa/disable` ★ (butuh `X-Step-Up-Token`) → `200`. User ber-role internal tidak boleh mematikan 2FA → `403 PERMISSION_DENIED`.
+- Kode TOTP: HMAC-SHA1, 6 digit, periode 30 detik, toleransi ±1 langkah. **Replay ditolak**: kode (atau langkah yang lebih lama) yang sudah dipakai tidak berlaku lagi, jadi dua operasi berturut-turut dalam satu langkah 30 detik butuh kode berikutnya.
+- Secret TOTP disimpan terenkripsi (AES-GCM, `key_id`) dan tidak pernah dikembalikan lagi setelah `setup`.
+
+### 4.6 Login dengan 2FA
+
+- `POST /auth/login/2fa` `{ "challenge_token": "ch_...", "code": "123456" }`. `code` boleh TOTP atau recovery code (huruf besar/kecil dan tanda hubung tidak dipermasalahkan; tiap recovery code sekali pakai).
+- `challenge_token` berlaku 5 menit, sekali pakai, dan dihanguskan setelah 5 kali kode salah. Kode salah → `401 INVALID_CREDENTIALS`; challenge tidak ada/kedaluwarsa/hangus → `401 UNAUTHENTICATED`. Batas tambahan: 10 percobaan per user / 5 menit dan 10 per IP / menit (`429 RATE_LIMITED`).
+
+### 4.7 Token terbatas untuk user internal
+
+User ber-role internal yang belum mengaktifkan 2FA mendapat login `200` dengan `two_factor_setup_required: true` dan token **terbatas** (claim `lim = 2fa_setup`). Token ini hanya diterima oleh `/auth/2fa/*`, `/auth/logout`, dan `/auth/logout-all`; endpoint lain menjawab `403 PERMISSION_DENIED` dengan `details[].code = "two_factor_setup_required"`. Pembatasan dihitung ulang saat `refresh`, dan hilang seketika setelah `enable` berhasil (tanpa login ulang).
 
 ---
 
@@ -1005,4 +1024,5 @@ Assign role `reseller` otomatis mengubah tier ke `RESELLER_SILVER` (bila belum b
 | 0.2 | 2026-10-10 | Nama aplikasi RaCash; prefix invoice `RC-` |
 | 0.3 | 2026-10-10 | Endpoint media (§8.10) & `*_media_id`; refund `MANUAL`; callback secret reseller; `fee_customer_share` & `expiry_minutes`; prioritas provider global (hapus `priority` per mapping); `EMAIL_NOT_VERIFIED` & wajib 2FA internal saat login; contoh vendor Xendit/Digiflazz; CRUD banner admin; `openapi.yaml` pertama dibuat |
 | 0.4 | 2026-10-10 | `/metrics` dipindah ke port internal `METRICS_ADDR` |
+| 0.6 | 2026-10-12 | 2FA TOTP & step-up (§4.5–§4.7): `GET /auth/2fa/status`, token terbatas `two_factor_setup_required`, batas percobaan, replay guard, middleware step-up |
 | 0.5 | 2026-10-12 | Auth (§4): format error captcha, batas rate limit per endpoint, respons endpoint tanpa data, perilaku anti-enumerasi, event `email_verification.requested` & `password_reset.requested`, batas sementara 2FA |

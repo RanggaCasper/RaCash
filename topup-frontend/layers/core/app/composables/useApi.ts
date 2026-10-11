@@ -27,20 +27,25 @@ export function useApi() {
   const fetcher = import.meta.server ? useRequestFetch() : $fetch
   const toast = import.meta.client ? useToast() : null
   const auth = useAuthStore()
+  const stepUp = useStepUpStore()
 
   async function raw<T>(method: Method, path: string, opts: ApiOptions = {}): Promise<Envelope<T>> {
+    const send = (stepUpToken?: string) => fetcher<Envelope<T>>(`/api${path}`, {
+      method,
+      query: opts.query,
+      body: opts.body as Record<string, unknown> | undefined,
+      headers: stepUpToken ? { ...opts.headers, 'X-Step-Up-Token': stepUpToken } : opts.headers,
+    })
     try {
-      return await fetcher<Envelope<T>>(`/api${path}`, {
-        method,
-        query: opts.query,
-        body: opts.body as Record<string, unknown> | undefined,
-        headers: opts.headers,
-      })
+      // 403 STEP_UP_REQUIRED → modal TOTP → request diulang otomatis (hanya di client).
+      return import.meta.client
+        ? await stepUp.run(send, e => toApiError(e).code === 'STEP_UP_REQUIRED')
+        : await send()
     }
     catch (e) {
       const err = toApiError(e)
       if (err.status === 401) auth.clear()
-      if (toast && !opts.silent && err.code !== 'VALIDATION_ERROR') {
+      if (toast && !opts.silent && err.code !== 'VALIDATION_ERROR' && err.code !== 'STEP_UP_REQUIRED') {
         toast.add({ title: err.message, color: 'error', description: err.requestId ? `ID: ${err.requestId}` : undefined })
       }
       throw err

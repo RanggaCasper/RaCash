@@ -28,6 +28,12 @@ export class ApiError extends Error {
   }
 }
 
+/** 403 dari token terbatas: user internal wajib mengaktifkan 2FA (API_CONTRACT §4.7). */
+export function isSetupRequired(e: unknown): boolean {
+  const err = toApiError(e)
+  return err.code === 'PERMISSION_DENIED' && err.details.some(d => d.code === 'two_factor_setup_required')
+}
+
 interface FetchLikeError {
   status?: number
   statusCode?: number

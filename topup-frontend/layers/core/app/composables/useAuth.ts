@@ -12,7 +12,7 @@ export function useAuth() {
   const api = useApi()
 
   const user = computed(() => auth.user)
-  const loggedIn = computed(() => auth.user !== null)
+  const loggedIn = computed(() => auth.user !== null || auth.setupRequired)
 
   /** Memuat profil + permission. false bila belum login/sesi habis. */
   async function fetchSession(): Promise<boolean> {
@@ -25,7 +25,13 @@ export function useAuth() {
       perms.set(p)
       return true
     }
-    catch {
+    catch (e) {
+      // Token terbatas (staf internal belum punya 2FA): sesi ada, tetapi profil ditolak.
+      if (isSetupRequired(e)) {
+        auth.setSetupRequired()
+        perms.clear()
+        return true
+      }
       auth.clear()
       perms.clear()
       return false
@@ -36,7 +42,10 @@ export function useAuth() {
     if (result.two_factor_required && result.challenge_token) {
       return { status: 'two_factor', challengeToken: result.challenge_token }
     }
-    if (result.two_factor_setup_required) return { status: 'two_factor_setup' }
+    if (result.two_factor_setup_required) {
+      auth.setSetupRequired()
+      return { status: 'two_factor_setup' }
+    }
     await fetchSession()
     return { status: 'ok' }
   }
