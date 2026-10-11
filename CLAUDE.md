@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RaCash is a top-up website for digital products (game currency, vouchers, pulsa, data, PLN, e-wallet) that is multi-provider and multi-payment-gateway. Specs live in `docs/` and are written in Indonesian; keep doc edits in Indonesian. Work is tracked as GitHub issues grouped by milestone M0–M4 (PRD §11).
 
-- `topup-backend/` (Go 1.25, Fiber v2, GORM, Redis, Asynq): the platform kernel, app wiring, the full schema (migrations 0001–0018), GORM models for every module (`internal/modules/<m>/internal/repository/model.go`), and seeds exist. No module services, handlers, or `app.Module` implementations yet. Its README covers setup and module conventions.
-- `topup-frontend/` (Nuxt 4.6.0): not started. The planned layout is in ARCHITECTURE §3.2.
+- `topup-backend/` (Go 1.26, Fiber v2, GORM, Redis, Asynq): the platform kernel, app wiring, the full schema (migrations 0001–0018), GORM models for every module (`internal/modules/<m>/internal/repository/model.go`), and seeds exist. Three modules are implemented end to end: `user`, `rbac` (only `RolesOf`/`AssignRole` so far; roles CRUD, `Require`, and `Authorizer` are still to come), and `auth` (register, email verification, login, refresh rotation, sessions, password reset, 2FA TOTP, step-up). The other modules still have only models. Its README covers setup and module conventions.
+- `topup-frontend/` (Nuxt 4.6.1, Nitro BFF): scaffolded. It has the core layer, the auth flow (login, 2FA login, TOTP step-up modal, `/akun/keamanan`), and placeholder pages. Its README covers commands and pitfalls.
+- Infra: `docker-compose.yml` at the repo root (see below), CI in `.github/workflows/{backend,frontend,openapi}.yml`.
 
 ## Commands (run in `topup-backend/`)
 
@@ -23,13 +24,43 @@ go run ./cmd/api      # :8080 public, :9090 /metrics (internal only)
 go run ./cmd/worker   # Asynq server + scheduler + outbox relay
 ```
 
-The API and worker need these variables (see `.env.example`):
+The API and worker need these variables (see `topup-backend/.env.example`):
 - Database: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE`. These are separate variables, not a single URL; `config.Database.URL()` builds the escaped DSN.
 - `REDIS_URL`, `ENCRYPTION_KEYS`, and `ENCRYPTION_ACTIVE_KEY_ID`.
+- `JWT_SECRET` (at least 32 characters; startup fails without it).
+- `CAPTCHA_SECRET` (Cloudflare Turnstile). It may be empty only when `APP_ENV=local`, where captcha is disabled; elsewhere config loading fails.
 
-Integration tests read the same fields with a `TEST_` prefix. Each module's `internal/repository/model_test.go` also needs them: it checks that the GORM models match the migrated tables.
+Integration tests read the database fields with a `TEST_` prefix. The auth integration tests also need `TEST_REDIS_URL` (use a different Redis DB number from development; the tests delete `rl:*` keys) and are skipped without it. Each module's `internal/repository/model_test.go` also needs the database fields: it checks that the GORM models match the migrated tables.
 
-In `APP_ENV=local`, `migrate up`, the API, and the worker create `DB_NAME` if it is missing (`database.EnsureExists`, which goes through `DB_MAINTENANCE_NAME`). Elsewhere this only happens with `DB_AUTO_CREATE=true`. CI is `.github/workflows/backend.yml`: tidy check, vet, migrate up/down/up (`up` also seeds), and `go test -race` against Postgres 17.
+In `APP_ENV=local`, `migrate up`, the API, and the worker create `DB_NAME` if it is missing (`database.EnsureExists`, which goes through `DB_MAINTENANCE_NAME`). Elsewhere this only happens with `DB_AUTO_CREATE=true`.
+
+CI runs three workflows:
+- `backend.yml`: tidy check, golangci-lint, vet, build, migrate up/down/up (`up` also seeds), `go test -race` against Postgres 17 and Redis 7, and a Docker image build.
+- `frontend.yml`: `npm run gen:api` followed by `git diff --exit-code shared/types/api.d.ts`, lint, typecheck, unit, BFF, build, and Playwright.
+- `openapi.yml`: `openapi-spec-validator docs/openapi.yaml`.
+
+Before pushing, run the same checks locally. `golangci-lint` is not installed here, so use `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...`. Existing `defer x.Close()` lint findings are excluded in `topup-backend/.golangci.yml`.
+
+## Commands (run in `topup-frontend/`)
+
+```bash
+npm run lint && npm run typecheck && npm test   # unit tests (pure functions, no build)
+npm run test:bff                                # builds Nuxt, mock Go API, no browser (~1 min)
+npm run build && npx playwright test            # E2E; the build must exist first
+npm run gen:api                                 # regenerate shared/types/api.d.ts from docs/openapi.yaml
+```
+
+- **Always run `npm run gen:api` after editing `docs/openapi.yaml`, and commit the result.** CI fails on any diff, and an `openapi.yaml` change that reaches `main` breaks every open frontend branch that has not regenerated.
+- `typecheck` does not catch Vue template-structure errors (for example a stray `v-else`); `build` or `test:bff` does.
+- Playwright tests that fill a form must wait for the submit button to be enabled first (it is disabled until hydration), or the fill can be overwritten when the page hydrates.
+
+## Docker
+
+`docker compose up --build` from the repo root starts caddy, nuxt, api, worker, postgres, redis, and a one-shot `migrate` job. Copy `.env.example` to `.env` first and fill `ENCRYPTION_KEYS` (`make keygen` in `topup-backend/`) and `JWT_SECRET`.
+
+- The host ports for postgres and redis default to 5433 and 6380 (`POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`) so they do not clash with local installs. Containers talk to each other on the standard ports.
+- MinIO is optional (`--profile storage`) because the official `minio/minio` image is no longer pullable; the backend does not use S3 yet.
+- The Go image is distroless with `CMD`, not `ENTRYPOINT`, so compose `command:` replaces it (`/app/migrate up`, `/app/worker`). With `ENTRYPOINT`, those commands would be passed to the API instead.
 
 ## Documents and how they relate
 
@@ -82,6 +113,14 @@ Each doc has a version in its header, and the docs cite each other's versions. W
 ## Platform gotchas (`topup-backend/internal/platform`)
 
 - **Adding a module:** add it to `Allowed` in `test/arch/rules.go` and to ARCHITECTURE §2.4, or the architecture test fails. Register it in `internal/app/bootstrap.go` in dependency order.
+- **Modules must not import `internal/app`** (the architecture test enforces it). Types that modules need, such as `httpx.Middlewares`, live in `platform/httpx`; `app.Middlewares` is only an alias. For the same reason a module cannot embed `app.Base`: give it its own no-op `RegisterRoutes`/`RegisterJobs`/`RegisterSubscribers`. A module that provides middleware implements `app.Authenticator` (`Authenticate()`, `StepUp()`), and `internal/app/http.go` wires it into `Middlewares`.
+- **Module layout:** the public package (`user.go`, `auth.go`) holds the contract and re-exports types as aliases of `internal/domain` types. `internal/service` therefore cannot import the public package (import cycle), so service signatures use domain types. The domain layer must not import GORM or Fiber.
+- **Adding middleware to routes:** every authenticated route uses `mw.Authenticate`. Sensitive (★) routes add `mw.StepUp` after it. A restricted token (internal user without 2FA, JWT claim `lim=2fa_setup`) is rejected by `Authenticate` with `PERMISSION_DENIED` and detail code `two_factor_setup_required`, except on `/auth/2fa/*`, logout, and logout-all.
+- **Secrets at rest:** tokens (refresh, email verification, password reset, challenge, step-up) are random 256-bit values stored only as SHA-256 hashes (in Postgres or in Redis keys). The raw token appears only in the response, or in the outbox event payload that the notification module sends by email. TOTP secrets use the keyring (AES-GCM); passwords use argon2id (`platform/crypto`).
+- **TOTP replay:** a code is accepted only if its time step is greater than `user_totp.last_used_step`, updated with a conditional `UPDATE ... RowsAffected`. Integration tests that need several codes in one 30-second step reset `last_used_step` between operations.
+- **Anti-enumeration:** `resend-verification` and `forgot-password` always answer 200, and login treats unknown emails and wrong passwords identically (including a dummy hash check for equal timing).
+- **Unique violations:** `gorm.ErrDuplicatedKey` works because `TranslateError` is on; map it to `errs.Conflict` in the repository.
+- **Windows line endings:** git converts to CRLF in the working tree. Do not run `gofmt -w` on a whole directory, since it rewrites untouched files and pollutes the diff; format only the files you changed (`gofmt -l` also lists CRLF files that are already fine).
 - **Transactions:** repositories take `uow.DBProvider` and call `DB(ctx)`. Services wrap a use case in `uow.Tx.Do`. `event.Outbox.Publish` returns `ErrNotInTx` outside a transaction, by design.
 - **Errors:** handlers return `*errs.Error`, and any other error is rendered as `INTERNAL_ERROR` with the message hidden. `httpx.AccessLog` renders errors itself so that metrics see the final status. Keep the middleware order in `internal/app/http.go`: request id → metrics → access log → recover.
 - **Idempotency:** `idempotency_keys.response_body` stores the body as a JSON *string* inside `jsonb`. `jsonb` reorders keys, and replays must be byte-identical. Only responses below 400 are stored; errors release the key.
