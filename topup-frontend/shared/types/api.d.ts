@@ -1864,7 +1864,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Prometheus; hanya dari jaringan internal. */
+        /** @description Prometheus. Hanya dilayani di port internal METRICS_ADDR (default :9090), tidak di host API publik. */
         get: operations["metrics"];
         put?: never;
         post?: never;
