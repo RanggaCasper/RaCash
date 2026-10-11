@@ -63,6 +63,27 @@ export function useAuth() {
     return handleLogin(result)
   }
 
+  const captchaHeaders = (token?: string) => (token ? { 'X-Captcha-Token': token } : undefined)
+
+  async function register(
+    input: { name: string, email: string, phone: string, password: string },
+    captchaToken?: string,
+  ) {
+    return await api.post<{ user_id: string, status: string }>('/auth/register', input, {
+      silent: true,
+      headers: captchaHeaders(captchaToken),
+    })
+  }
+
+  /** Selalu sukses di server (anti-enumerasi); error hanya untuk captcha/rate limit. */
+  async function resendVerification(email: string, captchaToken?: string) {
+    await api.post('/auth/resend-verification', { email }, { silent: true, headers: captchaHeaders(captchaToken) })
+  }
+
+  async function forgotPassword(email: string, captchaToken?: string) {
+    await api.post('/auth/forgot-password', { email }, { silent: true, headers: captchaHeaders(captchaToken) })
+  }
+
   async function logout() {
     try {
       await api.post('/auth/logout', undefined, { silent: true })
@@ -74,5 +95,5 @@ export function useAuth() {
     }
   }
 
-  return { user, loggedIn, fetchSession, login, verifyTwoFactor, logout }
+  return { user, loggedIn, fetchSession, login, verifyTwoFactor, register, resendVerification, forgotPassword, logout }
 }
