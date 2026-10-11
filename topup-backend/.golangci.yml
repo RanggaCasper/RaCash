@@ -1,0 +1,11 @@
+version: "2"
+linters:
+  default: standard
+  exclusions:
+    rules:
+      # Close() di defer/cleanup tidak punya penanganan error yang berarti.
+      - linters: [errcheck]
+        text: "Close"
+      # Pesan errcheck untuk `defer Close(db)` (fungsi paket) tidak memuat nama fungsi.
+      - linters: [errcheck]
+        path: internal/platform/database/ensure\.go

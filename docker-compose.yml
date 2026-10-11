@@ -1,0 +1,106 @@
+# Lingkungan lokal & dasar staging (ARCHITECTURE §8).
+#   cp .env.example .env && docker compose up --build
+# Kunci enkripsi: (cd topup-backend && make keygen) lalu isi ENCRYPTION_* di .env.
+name: racash
+
+x-backend: &backend
+  build: ./topup-backend
+  image: racash-backend:local
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    REDIS_URL: redis://redis:6379/0
+    S3_ENDPOINT: http://minio:9000
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    migrate: { condition: service_completed_successfully }
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      WEB_DOMAIN: ${WEB_DOMAIN:-localhost}
+      API_DOMAIN: ${API_DOMAIN:-api.localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [nuxt, api]
+
+  nuxt:
+    build: ./topup-frontend
+    restart: unless-stopped
+    environment:
+      NUXT_API_BASE: http://api:8080
+      NUXT_COOKIE_SECURE: ${NUXT_COOKIE_SECURE:-true}
+      NUXT_ALLOWED_ORIGINS: ${NUXT_ALLOWED_ORIGINS:-}
+
+  api:
+    <<: *backend
+    command: ["/app/api"]
+    ports: ["127.0.0.1:8080:8080", "127.0.0.1:9090:9090"]
+
+  worker:
+    <<: *backend
+    command: ["/app/worker"]
+
+  # Job migrasi: jalan sekali sebelum api/worker (ARCHITECTURE §8).
+  migrate:
+    build: ./topup-backend
+    image: racash-backend:local
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    command: ["/app/migrate", "up"]
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-racash}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-racash}
+      POSTGRES_DB: ${DB_NAME:-racash}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pg_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-racash}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-racash-secret}
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: [minio_data:/data]
+
+volumes:
+  pg_data:
+  redis_data:
+  minio_data:
+  caddy_data:
+  caddy_config:
