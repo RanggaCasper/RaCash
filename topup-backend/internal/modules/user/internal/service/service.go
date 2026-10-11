@@ -55,6 +55,10 @@ func (s *Service) SetPasswordHash(ctx context.Context, userID uuid.UUID, hash st
 	return s.repo.SetPasswordHash(ctx, userID, hash, s.clock.Now())
 }
 
+func (s *Service) SetTwoFactorEnabled(ctx context.Context, userID uuid.UUID, enabled bool) error {
+	return s.repo.SetTwoFactorEnabled(ctx, userID, enabled, s.clock.Now())
+}
+
 func (s *Service) RecordLogin(ctx context.Context, userID uuid.UUID) error {
 	return s.repo.TouchLastLogin(ctx, userID, s.clock.Now())
 }

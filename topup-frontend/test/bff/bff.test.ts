@@ -45,8 +45,14 @@ beforeAll(async () => {
       if (path === '/api/v1/auth/login') {
         const { email, password } = JSON.parse(body || '{}')
         if (email === '2fa@racash.id') return json(res, 200, { success: true, data: { two_factor_required: true, challenge_token: 'ch_1' }, request_id: 'r' })
+        if (email === 'staf@racash.id') return json(res, 200, { success: true, data: { two_factor_required: false, two_factor_setup_required: true, ...tokens('at-limited', 'rt-limited'), user: { id: 'u2', name: 'Staf' } }, request_id: 'r' })
         if (password !== 'rahasia') return json(res, 401, fail('INVALID_CREDENTIALS'))
         return json(res, 200, { success: true, data: { two_factor_required: false, ...tokens('at-valid', 'rt-login'), user: { id: 'u1', name: 'Rangga' } }, request_id: 'r' })
+      }
+      if (path === '/api/v1/auth/login/2fa') {
+        const { challenge_token, code } = JSON.parse(body || '{}')
+        if (challenge_token !== 'ch_1' || code !== '123456') return json(res, 401, fail('INVALID_CREDENTIALS'))
+        return json(res, 200, { success: true, data: { two_factor_required: false, ...tokens('at-2fa', 'rt-2fa'), user: { id: 'u1', name: 'Rangga' } }, request_id: 'r' })
       }
       if (path === '/api/v1/auth/refresh') {
         refreshCalls++
@@ -133,6 +139,26 @@ describe('login', () => {
     expect(cookie(res, 'at')).toBeUndefined()
   })
 
+  it('login/2fa menyimpan token di cookie dan menyembunyikannya dari browser', async () => {
+    const res = await post('/api/auth/login/2fa', { challenge_token: 'ch_1', code: '123456' })
+    expect(res.status).toBe(200)
+    expect(JSON.stringify(await res.json())).not.toMatch(/at-2fa|rt-2fa|access_token|refresh_token/)
+    expect(cookie(res, 'at')).toMatch(/^at=at-2fa;.*HttpOnly/i)
+    expect(cookie(res, 'rt')).toMatch(/^rt=rt-2fa;.*HttpOnly/i)
+
+    const bad = await post('/api/auth/login/2fa', { challenge_token: 'ch_1', code: '000000' })
+    expect(bad.status).toBe(401)
+    expect(cookie(bad, 'at')).toBeUndefined()
+  })
+
+  it('staf tanpa 2FA: token terbatas disimpan di cookie, flag setup diteruskan ke browser', async () => {
+    const res = await post('/api/auth/login', { email: 'staf@racash.id', password: 'rahasia' })
+    const body = await res.json()
+    expect(body.data.two_factor_setup_required).toBe(true)
+    expect(JSON.stringify(body)).not.toMatch(/at-limited|rt-limited|access_token|refresh_token/)
+    expect(cookie(res, 'at')).toMatch(/^at=at-limited;.*HttpOnly/i)
+  })
+
   it('meneruskan error Go API apa adanya', async () => {
     const res = await post('/api/auth/login', { email: 'a@racash.id', password: 'salah' })
     expect(res.status).toBe(401)
@@ -164,6 +190,17 @@ describe('proxy', () => {
     expect(call.headers['idempotency-key']).toBe('idem-1')
     expect(call.headers['x-step-up-token']).toBe('su-1')
     expect(call.headers.authorization).toBeUndefined() // header Authorization dari browser diabaikan
+  })
+
+  it('step-up dan endpoint 2FA lewat proxy dengan Bearer dari cookie', async () => {
+    for (const path of ['/api/auth/step-up', '/api/auth/2fa/setup', '/api/auth/2fa/enable', '/api/auth/2fa/disable']) {
+      seen.length = 0
+      const res = await post(path, { code: '123456' }, { cookie: 'at=at-valid; rt=rt-x', 'x-step-up-token': 'su_1' })
+      expect(res.status).toBe(200)
+      const call = seen.find(s => s.path === path.replace('/api/', '/api/v1/'))!
+      expect(call.headers.authorization).toBe('Bearer at-valid')
+      expect(call.headers['x-step-up-token']).toBe('su_1')
+    }
   })
 
   it('tidak memproxy webhook & H2H', async () => {

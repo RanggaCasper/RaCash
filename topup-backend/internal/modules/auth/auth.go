@@ -39,6 +39,7 @@ type Module struct {
 	svc          *service.Service
 	handler      *handler.Handler
 	authenticate fiber.Handler
+	stepUp       fiber.Handler
 }
 
 // New merangkai modul auth. users dan roles adalah kontrak publik modul user dan rbac.
@@ -51,18 +52,23 @@ func New(p *platform.Platform, users user.Service, roles rbac.Service) (*Module,
 		Outbox:  p.Outbox,
 		Tokens:  token.NewIssuer(p.Config.JWTSecret, p.Clock),
 		Limiter: p.RateLimit,
+		Keyring: p.Keyring,
+		Redis:   p.Redis,
 		Clock:   p.Clock,
 		Log:     p.Log,
 	})
 	if err != nil {
 		return nil, err
 	}
-	authn := handler.Authenticate(svc)
-	h, err := handler.New(svc, p.Validator, authn)
+	h, err := handler.New(svc, p.Validator)
 	if err != nil {
 		return nil, err
 	}
-	return &Module{svc: svc, handler: h, authenticate: authn}, nil
+	return &Module{
+		svc: svc, handler: h,
+		authenticate: handler.Authenticate(svc, false),
+		stepUp:       handler.StepUp(svc),
+	}, nil
 }
 
 func (*Module) Name() string { return "auth" }
@@ -70,6 +76,10 @@ func (*Module) Name() string { return "auth" }
 // Authenticate adalah middleware Bearer JWT untuk modul lain (dipasang ke
 // httpx.Middlewares.Authenticate oleh app).
 func (m *Module) Authenticate() fiber.Handler { return m.authenticate }
+
+// StepUp adalah middleware untuk endpoint sensitif ★: mewajibkan X-Step-Up-Token
+// yang valid. Dipasang setelah Authenticate.
+func (m *Module) StepUp() fiber.Handler { return m.stepUp }
 
 func (m *Module) RegisterRoutes(r fiber.Router, mw httpx.Middlewares) { m.handler.Register(r, mw) }
 func (*Module) RegisterJobs(*asynq.ServeMux)                          {}

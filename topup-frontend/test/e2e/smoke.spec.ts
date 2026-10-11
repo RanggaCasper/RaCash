@@ -21,6 +21,8 @@ test('/admin (SPA) tanpa login diarahkan ke /masuk', async ({ page }) => {
 
 test('form login memvalidasi input di client', async ({ page }) => {
   await page.goto('/masuk')
+  // Tombol aktif setelah hidrasi; mengisi form sebelum itu bisa tertimpa saat hidrasi.
+  await expect(page.getByRole('button', { name: 'Masuk' })).toBeEnabled()
   await page.getByLabel('Email').fill('bukan-email')
   await page.getByRole('button', { name: 'Masuk' }).click()
   await expect(page.getByText('Format email tidak valid.')).toBeVisible()

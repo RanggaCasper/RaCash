@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: RaCash API
-  version: 0.5.0
+  version: 0.6.0
   summary: Website top-up multi provider & multi payment gateway
   description: |
-    Dihasilkan dari `API_CONTRACT.md` v0.5. Bila berbeda, `API_CONTRACT.md` yang berlaku
+    Dihasilkan dari `API_CONTRACT.md` v0.6. Bila berbeda, `API_CONTRACT.md` yang berlaku
     dan file ini wajib diperbarui.
 
     Konvensi:
@@ -347,7 +347,6 @@ paths:
         - `403 EMAIL_NOT_VERIFIED` bila email belum diverifikasi.
         - `two_factor_required: true` → lanjut ke `/auth/login/2fa`.
         - `two_factor_setup_required: true` → user internal belum mengaktifkan 2FA; token hanya bisa mengakses `/auth/2fa/*`.
-        - Sementara alur 2FA belum ada: user ber-2FA atau ber-role internal mendapat `503 SERVICE_UNAVAILABLE` (gagal tertutup).
         - `422 VALIDATION_ERROR` bila captcha kosong/ditolak (`details[].field = X-Captcha-Token`).
       parameters: [ { $ref: '#/components/parameters/CaptchaToken' } ]
       requestBody:
@@ -376,6 +375,9 @@ paths:
     post:
       tags: [Auth]
       operationId: login2fa
+      description: |
+        Challenge berlaku 5 menit, sekali pakai, hangus setelah 5 kode salah.
+        Kode salah → `401 INVALID_CREDENTIALS`; challenge tidak ada/kedaluwarsa → `401 UNAUTHENTICATED`.
       requestBody:
         required: true
         content:
@@ -398,6 +400,7 @@ paths:
                     properties:
                       data: { $ref: '#/components/schemas/LoginResult' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   /api/v1/auth/refresh:
     post:
@@ -482,6 +485,25 @@ paths:
         '200': { $ref: '#/components/responses/Ok' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /api/v1/auth/2fa/status:
+    get:
+      tags: [Auth]
+      operationId: get2faStatus
+      description: Boleh dipanggil dengan token terbatas (`two_factor_setup_required`).
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: Status 2FA
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/TwoFactorStatus' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
   /api/v1/auth/2fa/setup:
     post:
       tags: [Auth]
@@ -497,12 +519,8 @@ paths:
                   - $ref: '#/components/schemas/Envelope'
                   - type: object
                     properties:
-                      data:
-                        type: object
-                        required: [otpauth_url]
-                        properties:
-                          otpauth_url: { type: string }
-                          secret: { type: string, description: Untuk input manual }
+                      data: { $ref: '#/components/schemas/TwoFactorSetup' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /api/v1/auth/2fa/enable:
     post:
@@ -524,12 +542,10 @@ paths:
                   - $ref: '#/components/schemas/Envelope'
                   - type: object
                     properties:
-                      data:
-                        type: object
-                        required: [recovery_codes]
-                        properties:
-                          recovery_codes: { type: array, items: { type: string } }
+                      data: { $ref: '#/components/schemas/RecoveryCodes' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   /api/v1/auth/2fa/disable:
     post:
@@ -546,6 +562,7 @@ paths:
     post:
       tags: [Auth]
       operationId: stepUp
+      description: Hanya kode TOTP (recovery code ditolak). Token terikat ke user dan sesi pembuatnya.
       security: [ { bearerAuth: [] } ]
       requestBody:
         required: true
@@ -562,13 +579,9 @@ paths:
                   - $ref: '#/components/schemas/Envelope'
                   - type: object
                     properties:
-                      data:
-                        type: object
-                        required: [step_up_token, expires_at]
-                        properties:
-                          step_up_token: { type: string }
-                          expires_at: { $ref: '#/components/schemas/DateTime' }
+                      data: { $ref: '#/components/schemas/StepUpResult' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   # ==========================================================================
   # MEMBER
@@ -3798,6 +3811,30 @@ components:
               name: { type: string }
         permissions: { type: array, items: { type: string }, example: [dashboard:view, orders:read] }
         perm_version: { type: integer }
+    TwoFactorStatus:
+      type: object
+      required: [enabled, required, recovery_codes_remaining]
+      properties:
+        enabled: { type: boolean }
+        required: { type: boolean, description: Benar untuk user ber-role internal }
+        recovery_codes_remaining: { type: integer }
+    TwoFactorSetup:
+      type: object
+      required: [otpauth_url, secret]
+      properties:
+        otpauth_url: { type: string, description: URI otpauth:// untuk QR code }
+        secret: { type: string, description: Secret base32 untuk input manual }
+    RecoveryCodes:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes: { type: array, items: { type: string } }
+    StepUpResult:
+      type: object
+      required: [step_up_token, expires_at]
+      properties:
+        step_up_token: { type: string }
+        expires_at: { $ref: '#/components/schemas/DateTime' }
     Session:
       type: object
       properties:

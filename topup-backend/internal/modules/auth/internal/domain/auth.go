@@ -24,6 +24,22 @@ const (
 	PasswordResetPrefix    = "pr_"
 )
 
+// LimitSetup2FA adalah nilai claim `lim`: token hanya boleh mengakses /auth/2fa/*
+// (user internal yang belum mengaktifkan 2FA).
+const LimitSetup2FA = "2fa_setup"
+
+// Parameter 2FA.
+const (
+	ChallengeTTL         = 5 * time.Minute // login/2fa
+	StepUpTTL            = 5 * time.Minute // X-Step-Up-Token
+	MaxChallengeAttempts = 5
+	RecoveryCodeCount    = 10
+	TOTPSkew             = 1 // toleransi ±1 langkah (30 detik) untuk selisih jam
+	ChallengePrefix      = "ch_"
+	StepUpPrefix         = "su_"
+	TOTPIssuer           = "RaCash"
+)
+
 // Alasan sesi dicabut (sessions.revoked_reason).
 const (
 	RevokedLogout      = "LOGOUT"
@@ -79,6 +95,7 @@ type Claims struct {
 	UserID      uuid.UUID
 	SessionID   uuid.UUID
 	PermVersion int32
+	Restricted  bool // claim lim = LimitSetup2FA
 	IssuedAt    time.Time
 	ExpiresAt   time.Time
 }
@@ -88,6 +105,8 @@ type Principal struct {
 	UserID      uuid.UUID
 	SessionID   uuid.UUID
 	PermVersion int32
+	// Restricted: user internal yang belum mengaktifkan 2FA; hanya boleh /auth/2fa/*.
+	Restricted bool
 }
 
 // SessionMeta adalah metadata klien saat sesi dibuat.
@@ -117,6 +136,12 @@ type AuthUser struct {
 type LoginResult struct {
 	Tokens
 	User AuthUser
+	// TwoFactorRequired: belum ada token; lanjut ke login/2fa dengan ChallengeToken.
+	TwoFactorRequired  bool
+	ChallengeToken     string
+	ChallengeExpiresAt time.Time
+	// TwoFactorSetupRequired: token terbatas, hanya untuk /auth/2fa/*.
+	TwoFactorSetupRequired bool
 }
 
 // SessionView adalah sesi aktif untuk daftar sesi user.
