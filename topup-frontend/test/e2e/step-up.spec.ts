@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
 // Modal step-up 2FA (RBAC-08) end-to-end di browser, dengan Go API ditiru lewat
-// page.route. Navigasi ke /akun/keamanan dilakukan di sisi client karena BFF
+// page.route. Navigasi ke /account/security dilakukan di sisi client karena BFF
 // tanpa Go API tidak bisa memuat sesi saat SSR.
 
 const ok = (data: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data, request_id: 'r' }) })

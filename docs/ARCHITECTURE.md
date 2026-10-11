@@ -371,7 +371,7 @@ topup-frontend/
 │   │       ├── stores/          # Pinia: auth, permissions
 │   │       └── utils/           # format rupiah, tanggal WIB, masking
 │   ├── storefront/              # halaman publik: beranda, brand, checkout, invoice, lacak
-│   ├── account/                 # /akun/**: dashboard member, riwayat, saldo, deposit, API key
+│   ├── account/                 # /account/**: dashboard member, riwayat, saldo, deposit, API key
 │   └── admin/                   # /admin/**: seluruh panel admin
 ├── server/                      # Nitro = BFF
 │   ├── api/
@@ -394,8 +394,8 @@ Stack pendukung (rekomendasi): Pinia, Tailwind CSS + Nuxt UI, VeeValidate + Zod,
 |---|---|---|
 | `/` | SSR + SWR 60 dtk | SEO, konten berubah pelan |
 | `/g/:brand` (halaman produk game) | SSR + SWR 300 dtk; harga diambil ulang di client | SEO; harga harus segar saat checkout |
-| `/invoice/:no`, `/lacak` | SSR tanpa cache | Data privat per transaksi |
-| `/akun/**` | SSR tanpa cache, butuh login | Data privat |
+| `/invoice/:no`, `/track` | SSR tanpa cache | Data privat per transaksi |
+| `/account/**` | SSR tanpa cache, butuh login | Data privat |
 | `/admin/**` | `ssr: false` (SPA) | Tidak perlu SEO, interaksi berat |
 | `/api/**` | Nitro handler (BFF) | Proxy ke Go API |
 
@@ -408,7 +408,7 @@ Browser ──GET /api/me/orders (cookie)──▶ Nitro ──Authorization: Be
                                          ├─ cookie at habis tapi rt ada → refresh dulu
                                          └─ jika 401 TOKEN_EXPIRED → refresh sekali → ulangi
 ```
-- Cookie `at` & `rt`: `HttpOnly`, `Secure`, `SameSite=Lax`, `path=/`. `rt` sengaja `path=/` (bukan `/api/auth`) agar SSR halaman privat (`/akun/**`) dan proxy `/api/**` bisa me-refresh token secara transparan.
+- Cookie `at` & `rt`: `HttpOnly`, `Secure`, `SameSite=Lax`, `path=/`. `rt` sengaja `path=/` (bukan `/api/auth`) agar SSR halaman privat (`/account/**`) dan proxy `/api/**` bisa me-refresh token secara transparan.
 - `rc_session=1` adalah penanda **non-httpOnly tanpa isi rahasia**: client memakainya untuk melewati panggilan `/me` saat jelas belum login.
 - Refresh dikerjakan BFF dengan *single-flight*. Refresh token dirotasi dan pemakaian ulang token lama mencabut sesi, jadi request paralel berbagi satu panggilan refresh, dan hasil rotasi di-cache 30 detik untuk request yang masih membawa `rt` lama.
 - Respons login/refresh dari Go API tidak pernah diteruskan apa adanya: token dipindah ke cookie dan dihapus dari body. Proxy generik menolak path `auth/login`, `auth/login/2fa`, `auth/refresh`, `auth/logout`, `webhooks/**`, `h2h/**`.

@@ -260,9 +260,9 @@ describe('halaman', () => {
     expect(html).not.toContain('Dashboard')
   })
 
-  it('/akun tanpa login diarahkan ke /masuk', async () => {
-    const res = await fetch('/akun', { redirect: 'manual' })
+  it('/account tanpa login diarahkan ke /login', async () => {
+    const res = await fetch('/account', { redirect: 'manual' })
     expect([301, 302, 307]).toContain(res.status)
-    expect(res.headers.get('location')).toContain('/masuk')
+    expect(res.headers.get('location')).toContain('/login')
   })
 })

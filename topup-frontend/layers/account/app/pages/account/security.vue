@@ -76,7 +76,7 @@ async function copyCodes() {
 
 async function finish() {
   recoveryCodes.value = []
-  if (auth.user) await navigateTo('/akun')
+  if (auth.user) await navigateTo(ACCOUNT_PATH)
 }
 </script>
 

@@ -4,5 +4,5 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (!auth.loaded) await useAuth().fetchSession()
   // Token terbatas: hanya halaman setup 2FA yang boleh dibuka.
   if (auth.setupRequired) return to.path === SECURITY_PATH ? undefined : navigateTo(SECURITY_PATH)
-  if (!auth.user) return navigateTo({ path: '/masuk', query: { redirect: to.fullPath } })
+  if (!auth.user) return navigateTo({ path: LOGIN_PATH, query: { redirect: to.fullPath } })
 })

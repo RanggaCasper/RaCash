@@ -32,13 +32,13 @@ const formError = ref('')
 async function done() {
   const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
     ? route.query.redirect
-    : '/akun'
+    : ACCOUNT_PATH
   await navigateTo(redirect)
 }
 
 async function onOutcome(outcome: LoginOutcome) {
   if (outcome.status === 'two_factor') challengeToken.value = outcome.challengeToken
-  else if (outcome.status === 'two_factor_setup') await navigateTo('/akun/keamanan')
+  else if (outcome.status === 'two_factor_setup') await navigateTo(SECURITY_PATH)
   else await done()
 }
 

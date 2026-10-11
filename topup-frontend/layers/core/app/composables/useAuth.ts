@@ -70,7 +70,7 @@ export function useAuth() {
     finally {
       auth.clear()
       perms.clear()
-      await navigateTo('/masuk')
+      await navigateTo(LOGIN_PATH)
     }
   }
 

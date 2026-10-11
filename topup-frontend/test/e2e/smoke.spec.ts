@@ -8,19 +8,19 @@ test('beranda tampil dengan tombol Masuk', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'Masuk' })).toBeVisible()
 })
 
-test('/akun tanpa login diarahkan ke /masuk dengan redirect', async ({ page }) => {
-  await page.goto('/akun')
-  await expect(page).toHaveURL(u => u.pathname === '/masuk' && u.searchParams.get('redirect') === '/akun')
+test('/account tanpa login diarahkan ke /login dengan redirect', async ({ page }) => {
+  await page.goto('/account')
+  await expect(page).toHaveURL(u => u.pathname === '/login' && u.searchParams.get('redirect') === '/account')
   await expect(page.getByRole('heading', { name: 'Masuk' })).toBeVisible()
 })
 
-test('/admin (SPA) tanpa login diarahkan ke /masuk', async ({ page }) => {
+test('/admin (SPA) tanpa login diarahkan ke /login', async ({ page }) => {
   await page.goto('/admin')
-  await expect(page).toHaveURL(u => u.pathname === '/masuk' && u.searchParams.get('redirect') === '/admin')
+  await expect(page).toHaveURL(u => u.pathname === '/login' && u.searchParams.get('redirect') === '/admin')
 })
 
 test('form login memvalidasi input di client', async ({ page }) => {
-  await page.goto('/masuk')
+  await page.goto('/login')
   // Tombol aktif setelah hidrasi; mengisi form sebelum itu bisa tertimpa saat hidrasi.
   await expect(page.getByRole('button', { name: 'Masuk' })).toBeEnabled()
   await page.getByLabel('Email').fill('bukan-email')
