@@ -4,9 +4,9 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi kontrak | v1 — 0.3 (Draft) |
+| Versi kontrak | v1 — 0.4 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.2), `database.dbml` (v0.2) |
+| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.3), `database.dbml` (v0.2) |
 | Sumber turunan | `api/openapi.yaml` dibuat dari dokumen ini |
 
 ---
@@ -984,7 +984,7 @@ Assign role `reseller` otomatis mengubah tier ke `RESELLER_SILVER` (bila belum b
 |---|---|---|
 | GET | `/healthz` | Liveness — selalu `200` jika proses hidup |
 | GET | `/readyz` | Readiness — cek PostgreSQL & Redis |
-| GET | `/metrics` | Prometheus (hanya dari jaringan internal) |
+| GET | `/metrics` | Prometheus. Hanya dilayani di port internal `METRICS_ADDR` (default `:9090`), tidak di host API publik |
 
 ---
 
@@ -995,3 +995,4 @@ Assign role `reseller` otomatis mengubah tier ke `RESELLER_SILVER` (bila belum b
 | 0.1 | 2026-10-10 | Draft awal: publik, auth, member, reseller H2H, webhook, admin, RBAC |
 | 0.2 | 2026-10-10 | Nama aplikasi RaCash; prefix invoice `RC-` |
 | 0.3 | 2026-10-10 | Endpoint media (§8.10) & `*_media_id`; refund `MANUAL`; callback secret reseller; `fee_customer_share` & `expiry_minutes`; prioritas provider global (hapus `priority` per mapping); `EMAIL_NOT_VERIFIED` & wajib 2FA internal saat login; contoh vendor Xendit/Digiflazz; CRUD banner admin; `openapi.yaml` pertama dibuat |
+| 0.4 | 2026-10-10 | `/metrics` dipindah ke port internal `METRICS_ADDR` |

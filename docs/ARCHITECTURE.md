@@ -2,9 +2,9 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi | 0.2 (Draft) |
+| Versi | 0.3 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.3), `database.dbml` (v0.2) |
+| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.4), `database.dbml` (v0.2) |
 
 ---
 
@@ -142,6 +142,11 @@ type Module interface {
     RegisterRoutes(r fiber.Router, mw Middlewares) // dipanggil di cmd/api
     RegisterJobs(mux *asynq.ServeMux)              // dipanggil di cmd/worker
     RegisterSubscribers(bus event.Bus)             // listener domain event
+}
+
+// Opsional: modul dengan job terjadwal (cron, UTC).
+type Scheduled interface {
+    RegisterSchedules(s *asynq.Scheduler) error
 }
 ```
 
@@ -428,7 +433,7 @@ Browser ──GET /api/me/orders (cookie)──▶ Nitro ──Authorization: Be
 
 ## 4. Data
 
-- PostgreSQL tunggal; migrasi per modul diberi prefix (`0001_user_*`, `0002_rbac_*`, ...).
+- PostgreSQL tunggal; migrasi bernomor urut global dengan nama modul di nama file: `NNNN_<modul>_<deskripsi>` (mis. `0001_platform_init`, `0002_user_init`). Buat lewat `go run ./cmd/migrate create <modul>_<deskripsi>`.
 - Primary key `uuid` (v7, terurut waktu) untuk entitas yang terekspos ke publik; nomor invoice terpisah (`RC-YYYYMMDD-XXXXXX`).
 - Gambar disimpan di object storage S3-compatible; metadata di tabel `media` dan direferensikan lewat `*_media_id` sehingga satu file bisa dipakai ulang. Respons API tetap mengirim URL (`icon_url`, dll.) hasil resolusi dari `media`.
 - Uang disimpan `BIGINT` dalam rupiah (tanpa desimal).
