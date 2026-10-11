@@ -2,7 +2,7 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi dokumen | 0.5 (Draft) — Revisi ambiguitas: expiry, retry, 2FA, Kirimdev, tabel media |
+| Versi dokumen | 0.6 (Draft) — Panel admin dipisah menjadi aplikasi Nuxt tersendiri |
 | Tanggal | 10 Oktober 2026 |
 | Pemilik | Rangga |
 | Status | Draft — menunggu review |
@@ -193,7 +193,7 @@ Satu `order` bisa punya banyak `order_attempt`; setiap attempt memakai `ref_id` 
 - **Backend:** Go + GoFiber, GORM, JWT auth — **Modular Architecture (modular monolith)**: setiap domain (auth, rbac, catalog, pricing, provider, payment, order, fulfillment, wallet, dst.) adalah modul mandiri dengan layer handler/service/repository berbasis interface, berkomunikasi lewat kontrak publik dan domain event. Detail di `ARCHITECTURE.md`.
 - **Database:** PostgreSQL.
 - **Cache & antrean:** Redis (cache harga/produk, rate limit, distributed lock) + worker queue (mis. Asynq) untuk fulfillment, polling status, sinkronisasi harga.
-- **Frontend:** Nuxt 4.6.1 (Vue 3, TypeScript), mobile-first. Dipecah per Nuxt Layer (core, storefront, account, admin); storefront di-render SSR/SWR untuk SEO, panel admin client-side. Nuxt server (Nitro) berperan sebagai BFF untuk menyimpan token di cookie httpOnly.
+- **Frontend:** Nuxt 4.6.1 (Vue 3, TypeScript), mobile-first. Dipecah per Nuxt Layer (core, storefront, account); storefront di-render SSR/SWR untuk SEO. Panel admin adalah aplikasi Nuxt terpisah di direktori sendiri (lihat butir 25 di bagian 13). Nuxt server (Nitro) berperan sebagai BFF untuk menyimpan token di cookie httpOnly.
 - **Alur kerja:** DBML schema → kontrak OpenAPI → implementasi.
 
 ### 5.2 Interface inti (gambaran)
@@ -549,3 +549,4 @@ Detail request/response ada di `API_CONTRACT.md` (sumber untuk `openapi.yaml`).
 22. ~~Tanda tangan callback reseller~~ — **diputuskan:** memakai `callback_secret` khusus per reseller, terpisah dari API key (`API_CONTRACT.md` §6.4).
 23. ~~Verifikasi email~~ — **diputuskan:** email wajib terverifikasi untuk login, sehingga berlaku ke seluruh fitur member.
 24. ~~Gambar~~ — **diputuskan:** tabel `media` terpusat dan dipakai ulang (CAT-08).
+25. ~~Lokasi panel admin~~ — **diputuskan:** panel admin dibangun sebagai aplikasi Nuxt baru di direktori terpisah (bukan layer di `topup-frontend`). Storefront tidak memproxy `/api/admin/**`; aplikasi admin punya BFF sendiri.

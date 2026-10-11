@@ -177,9 +177,10 @@ describe('proxy', () => {
     expect(call.headers['x-forwarded-for']).toBeTruthy()
   })
 
-  it('memetakan /api/admin/** ke /api/admin/v1/** beserta query', async () => {
-    const res = await fetch('/api/admin/orders?status=PAID,PROCESSING&page=2')
-    expect((await res.json()).data.path).toBe('/api/admin/v1/orders?status=PAID,PROCESSING&page=2')
+  it('tidak memproxy /api/admin/** (bukan bagian storefront)', async () => {
+    const res = await fetch('/api/admin/orders')
+    expect(res.status).toBe(404)
+    expect(seen).toHaveLength(0)
   })
 
   it('meneruskan body & header yang diizinkan (Idempotency-Key, step-up)', async () => {
@@ -253,11 +254,6 @@ describe('halaman', () => {
   it('beranda dirender SSR', async () => {
     const html = await (await fetch('/')).text()
     expect(html).toContain('Top up cepat')
-  })
-
-  it('/admin dirender sebagai SPA (tanpa SSR)', async () => {
-    const html = await (await fetch('/admin')).text()
-    expect(html).not.toContain('Dashboard')
   })
 
   it('/account tanpa login diarahkan ke /login', async () => {

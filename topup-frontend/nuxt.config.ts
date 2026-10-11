@@ -1,5 +1,5 @@
 // Aplikasi root. Fitur dipecah per Nuxt Layer di layers/ (core, storefront,
-// account, admin) yang otomatis didaftarkan oleh Nuxt (ARCHITECTURE §3).
+// account) yang otomatis didaftarkan oleh Nuxt (ARCHITECTURE §3).
 export default defineNuxtConfig({
   compatibilityDate: '2026-10-01',
   devtools: { enabled: true },
@@ -21,12 +21,11 @@ export default defineNuxtConfig({
   // merender data per user di server; status login dimuat di client.
   routeRules: {
     '/': { swr: 60 },
-    '/g/**': { swr: 300 },
+    '/games/**': { swr: 300 },
     '/invoice/**': { headers: { 'cache-control': 'no-store' } },
     '/track': { headers: { 'cache-control': 'no-store' } },
     '/account/**': { headers: { 'cache-control': 'no-store' } },
     '/login': { headers: { 'cache-control': 'no-store' } },
-    '/admin/**': { ssr: false },
     '/api/**': { headers: { 'cache-control': 'no-store' } },
   },
 

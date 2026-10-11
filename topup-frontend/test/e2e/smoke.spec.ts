@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-// Smoke test tanpa Go API: halaman publik, redirect login, dan SPA admin.
+// Smoke test tanpa Go API: halaman publik, dan redirect login.
 
 test('beranda tampil dengan tombol Masuk', async ({ page }) => {
   await page.goto('/')
@@ -12,11 +12,6 @@ test('/account tanpa login diarahkan ke /login dengan redirect', async ({ page }
   await page.goto('/account')
   await expect(page).toHaveURL(u => u.pathname === '/login' && u.searchParams.get('redirect') === '/account')
   await expect(page.getByRole('heading', { name: 'Masuk' })).toBeVisible()
-})
-
-test('/admin (SPA) tanpa login diarahkan ke /login', async ({ page }) => {
-  await page.goto('/admin')
-  await expect(page).toHaveURL(u => u.pathname === '/login' && u.searchParams.get('redirect') === '/admin')
 })
 
 test('form login memvalidasi input di client', async ({ page }) => {

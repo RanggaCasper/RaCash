@@ -30,7 +30,7 @@ const AUTH_TOKEN_PATHS = new Set(['auth/login', 'auth/login/2fa', 'auth/refresh'
 
 /**
  * Memetakan path setelah /api/ ke path Go API (API_CONTRACT §1.1):
- *   admin/<p> → /api/admin/v1/<p>,  <p> → /api/v1/<p>.
+ *   <p> → /api/v1/<p>.
  * null = tidak boleh diproxy (webhook & H2H langsung ke api.domain, route token auth).
  */
 export function upstreamPath(rest: string): string | null {
@@ -39,10 +39,8 @@ export function upstreamPath(rest: string): string | null {
   const first = path.split('/')[0]
   if (first === 'webhooks' || first === 'h2h') return null
   if (AUTH_TOKEN_PATHS.has(path)) return null
-  if (first === 'admin') {
-    const sub = path.slice('admin'.length).replace(/^\//, '')
-    return sub ? `/api/admin/v1/${sub}` : null
-  }
+  // API admin dilayani BFF aplikasi admin tersendiri, bukan storefront.
+  if (first === 'admin') return null
   return `/api/v1/${path}`
 }
 

@@ -1,5 +1,5 @@
 // Status login dimuat di CLIENT agar HTML halaman ber-cache (SWR) tidak pernah
-// berisi data user. Halaman privat (/account, /admin) memuatnya lewat middleware.
+// berisi data user. Halaman privat (/account) memuatnya lewat middleware.
 export default defineNuxtPlugin({
   name: 'auth-init',
   dependsOn: ['pinia'],

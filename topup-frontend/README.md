@@ -28,7 +28,6 @@ app/                  app.vue, error.vue
 layers/core           UI kit, Pinia store, useApi/useAuth/useCan/useMoney, middleware, v-can, util
 layers/storefront     halaman publik (beranda, brand, checkout, invoice, lacak)
 layers/account        /login, /account/**
-layers/admin          /admin/** (SPA, ssr: false)
 server/               BFF: api/auth/*, api/[...path].ts (proxy), middleware/csrf.ts, utils/session.ts
 shared/types          api.d.ts (generated) + schema.ts (helper Schema<'Me'>)
 test/{unit,bff,e2e}
@@ -38,7 +37,7 @@ Layer di `layers/` didaftarkan otomatis oleh Nuxt. Layer fitur hanya boleh berga
 
 ## Pola penting
 
-- **Panggilan API:** `const api = useApi(); await api.get<Schema<'Me'>>('/me')`. Path ditulis tanpa `/api`; admin memakai `/admin/...`. `useApi` mengurai envelope, melempar `ApiError`, dan menampilkan toast kecuali `{ silent: true }`. Di SSR, `useApi` memakai `useRequestFetch` agar cookie ikut terkirim.
+- **Panggilan API:** `const api = useApi(); await api.get<Schema<'Me'>>('/me')`. Path ditulis tanpa `/api`. Panel admin bukan bagian dari aplikasi ini (aplikasi Nuxt terpisah). `useApi` mengurai envelope, melempar `ApiError`, dan menampilkan toast kecuali `{ silent: true }`. Di SSR, `useApi` memakai `useRequestFetch` agar cookie ikut terkirim.
 - **Tipe:** pakai `Schema<'NamaSchema'>` dari `#shared/types/schema`. Jangan menulis tipe respons API manual.
 - **Auth:**
   - Token hanya ada di cookie httpOnly (`at`, `rt`) yang dikelola `server/utils/session.ts`; client tidak pernah melihatnya.

@@ -15,8 +15,8 @@ describe('upstreamPath', () => {
     expect(upstreamPath('brands/mobile-legends/products')).toBe('/api/v1/brands/mobile-legends/products')
   })
 
-  it('memetakan path admin ke /api/admin/v1', () => {
-    expect(upstreamPath('admin/orders/123/refund')).toBe('/api/admin/v1/orders/123/refund')
+  it('tidak memproxy path admin (aplikasi admin punya BFF sendiri)', () => {
+    expect(upstreamPath('admin/orders/123/refund')).toBeNull()
     expect(upstreamPath('admin')).toBeNull()
   })
 

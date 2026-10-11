@@ -1,5 +1,4 @@
-// Proxy generik BFF: /api/<path> → Go API /api/v1/<path>, /api/admin/<path> →
-// /api/admin/v1/<path>. Menyisipkan Bearer dari cookie httpOnly, me-refresh sekali
+// Proxy generik BFF: /api/<path> → Go API /api/v1/<path>. Menyisipkan Bearer dari cookie httpOnly, me-refresh sekali
 // bila access token kedaluwarsa, dan tidak pernah meneruskan cookie browser.
 import { defineEventHandler, getRequestURL, getRouterParam, readRawBody, setResponseStatus } from 'h3'
 

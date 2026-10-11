@@ -2,9 +2,9 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi | 0.5 (Draft) |
+| Versi | 0.6 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `API_CONTRACT.md` (v0.6), `database.dbml` (v0.3) |
+| Dokumen terkait | `PRD.md` (v0.6), `API_CONTRACT.md` (v0.6), `database.dbml` (v0.3) |
 
 ---
 
@@ -14,7 +14,7 @@ Sistem terdiri dari dua aplikasi utama dan dua proses pendukung:
 
 | Komponen | Teknologi | Peran |
 |---|---|---|
-| **Frontend** | Nuxt 4.6.1 (Vue 3, TypeScript) | Storefront (SSR/SWR), area member, panel admin; Nitro sebagai BFF |
+| **Frontend** | Nuxt 4.6.1 (Vue 3, TypeScript) | Storefront (SSR/SWR) dan area member; Nitro sebagai BFF. Panel admin adalah aplikasi Nuxt terpisah |
 | **API** | Go, GoFiber, GORM | REST API, webhook PG, callback provider, API H2H reseller |
 | **Worker** | Go (binary yang sama, entrypoint berbeda) | Fulfillment, polling status, sinkronisasi harga, rekonsiliasi, notifikasi, outbox relay |
 | **Data** | PostgreSQL, Redis, object storage S3-compatible | Penyimpanan utama; cache, lock, rate limit, antrean (Asynq); file media |
@@ -371,8 +371,7 @@ topup-frontend/
 │   │       ├── stores/          # Pinia: auth, permissions
 │   │       └── utils/           # format rupiah, tanggal WIB, masking
 │   ├── storefront/              # halaman publik: beranda, brand, checkout, invoice, lacak
-│   ├── account/                 # /account/**: dashboard member, riwayat, saldo, deposit, API key
-│   └── admin/                   # /admin/**: seluruh panel admin
+│   └── account/                 # /account/**: dashboard member, riwayat, saldo, deposit, API key
 ├── server/                      # Nitro = BFF
 │   ├── api/
 │   │   ├── auth/login.post.ts   # login → set cookie httpOnly
@@ -393,10 +392,9 @@ Stack pendukung (rekomendasi): Pinia, Tailwind CSS + Nuxt UI, VeeValidate + Zod,
 | Rute | Mode | Alasan |
 |---|---|---|
 | `/` | SSR + SWR 60 dtk | SEO, konten berubah pelan |
-| `/g/:brand` (halaman produk game) | SSR + SWR 300 dtk; harga diambil ulang di client | SEO; harga harus segar saat checkout |
+| `/games/:brand` (halaman produk game) | SSR + SWR 300 dtk; harga diambil ulang di client | SEO; harga harus segar saat checkout |
 | `/invoice/:no`, `/track` | SSR tanpa cache | Data privat per transaksi |
 | `/account/**` | SSR tanpa cache, butuh login | Data privat |
-| `/admin/**` | `ssr: false` (SPA) | Tidak perlu SEO, interaksi berat |
 | `/api/**` | Nitro handler (BFF) | Proxy ke Go API |
 
 ### 3.4 Alur autentikasi (BFF)
@@ -414,7 +412,7 @@ Browser ──GET /api/me/orders (cookie)──▶ Nitro ──Authorization: Be
 - Respons login/refresh dari Go API tidak pernah diteruskan apa adanya: token dipindah ke cookie dan dihapus dari body. Proxy generik menolak path `auth/login`, `auth/login/2fa`, `auth/refresh`, `auth/logout`, `webhooks/**`, `h2h/**`.
 - Proxy hanya meneruskan header yang di-allowlist (tanpa `Cookie` dan `Authorization` dari browser) dan menambahkan `X-Forwarded-For` berisi IP pembeli. Go API wajib mempercayai header ini **hanya** dari BFF, agar rate limit per IP tetap berlaku.
 - CSRF: request non-GET ke `/api/**` wajib `Origin` (atau `Referer`) sama dengan host situs atau terdaftar di `NUXT_ALLOWED_ORIGINS`.
-- Halaman ber-cache SWR (`/`, `/g/**`) **tidak boleh** merender data user di server: status login dimuat di client (`plugins/auth.client.ts`), dan menu akun dibungkus `<ClientOnly>`.
+- Halaman ber-cache SWR (`/`, `/games/**`) **tidak boleh** merender data user di server: status login dimuat di client (`plugins/auth.client.ts`), dan menu akun dibungkus `<ClientOnly>`.
 - Endpoint publik (katalog) saat SSR dipanggil lewat handler BFF di proses yang sama, yang meneruskannya ke Go API melalui jaringan internal (`NUXT_API_BASE`).
 - Webhook PG, callback provider, dan API H2H **tidak** lewat Nuxt — langsung ke `api.domain`.
 
@@ -525,7 +523,7 @@ docker-compose (staging / produksi awal)
 | 1 | Modular monolith | Tim kecil, deploy sederhana, transaksi DB mudah; batas modul tetap tegas | Microservice (overhead operasional) |
 | 2 | Outbox + Asynq untuk event | Konsisten dengan DB tanpa broker tambahan | Kafka/RabbitMQ (berlebihan di tahap awal) |
 | 3 | Adapter per vendor | Vendor bisa ditambah/diganti tanpa ubah alur inti | Integrasi langsung di service |
-| 4 | Nuxt 4 + Layers | SSR/SWR untuk SEO storefront, admin SPA dalam satu codebase | Dua aplikasi frontend terpisah |
+| 4 | Nuxt 4 + Layers untuk storefront dan area member; panel admin sebagai aplikasi Nuxt terpisah | SSR/SWR untuk SEO storefront. Keputusan pemilik produk: admin dibangun di direktori dan aplikasi Nuxt tersendiri (BFF sendiri) | Admin sebagai layer di aplikasi yang sama |
 | 5 | BFF via Nitro | Token aman di cookie httpOnly, tidak terekspos ke JavaScript | Token di localStorage |
 | 6 | JWT berisi `perm_version`, bukan daftar permission | Perubahan RBAC berlaku seketika, token kecil | Permission di dalam JWT |
 | 7 | Uang sebagai integer rupiah | Hindari error pembulatan float | `decimal`/`float` |

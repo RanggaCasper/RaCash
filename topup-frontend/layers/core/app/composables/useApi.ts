@@ -19,7 +19,7 @@ interface Envelope<T> {
 
 /**
  * Klien API lewat BFF (/api/**). Path ditulis tanpa prefix /api, mis. '/me',
- * '/admin/orders'. Mengurai envelope, melempar ApiError, dan menampilkan toast
+ * '/orders'. Mengurai envelope, melempar ApiError, dan menampilkan toast
  * standar di client kecuali `silent`. Dipanggil di setup (butuh konteks Nuxt).
  */
 export function useApi() {
