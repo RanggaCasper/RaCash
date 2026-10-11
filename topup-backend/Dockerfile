@@ -14,4 +14,4 @@ WORKDIR /app
 COPY --from=build /out/api /out/worker /out/migrate /app/
 COPY migrations /app/migrations
 EXPOSE 8080
-ENTRYPOINT ["/app/api"]
+CMD ["/app/api"]

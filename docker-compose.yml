@@ -69,7 +69,7 @@ services:
       POSTGRES_USER: ${DB_USER:-racash}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-racash}
       POSTGRES_DB: ${DB_NAME:-racash}
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"]
     volumes: [pg_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -80,7 +80,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports: ["127.0.0.1:6379:6379"]
+    ports: ["127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"]
     volumes: [redis_data:/data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -88,8 +88,12 @@ services:
       timeout: 3s
       retries: 10
 
+  # Opsional (belum dipakai backend): docker compose --profile storage up
+  # Image resmi MinIO tidak lagi tersedia publik; isi MINIO_IMAGE dengan image S3-compatible
+  # yang bisa Anda tarik (mirror sendiri, atau ganti ke image lain).
   minio:
-    image: minio/minio:latest
+    profiles: [storage]
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
