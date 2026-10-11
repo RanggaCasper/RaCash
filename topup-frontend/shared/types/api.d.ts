@@ -240,6 +240,8 @@ export interface paths {
          * @description - `403 EMAIL_NOT_VERIFIED` bila email belum diverifikasi.
          *     - `two_factor_required: true` → lanjut ke `/auth/login/2fa`.
          *     - `two_factor_setup_required: true` → user internal belum mengaktifkan 2FA; token hanya bisa mengakses `/auth/2fa/*`.
+         *     - Sementara alur 2FA belum ada: user ber-2FA atau ber-role internal mendapat `503 SERVICE_UNAVAILABLE` (gagal tertutup).
+         *     - `422 VALIDATION_ERROR` bila captcha kosong/ditolak (`details[].field = X-Captcha-Token`).
          */
         post: operations["login"];
         delete?: never;
@@ -273,7 +275,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Refresh token dirotasi; pemakaian ulang token lama mencabut seluruh sesi terkait. */
+        /** @description Refresh token dirotasi; pemakaian ulang token lama mencabut sesi pemilik token itu. */
         post: operations["refreshToken"];
         delete?: never;
         options?: never;
@@ -3137,6 +3139,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
+        /** @description `SERVICE_UNAVAILABLE` */
+        ServiceUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
         /** @description `UPSTREAM_ERROR` — provider/PG gagal merespons */
         UpstreamError: {
             headers: {
@@ -3474,6 +3485,7 @@ export interface operations {
             409: components["responses"]["Conflict"];
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     verifyEmail: {
@@ -3515,7 +3527,9 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["Ok"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     login: {
@@ -3547,7 +3561,9 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     login2fa: {
@@ -3656,7 +3672,9 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["Ok"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     resetPassword: {

@@ -4,9 +4,9 @@
 
 | Item | Keterangan |
 |---|---|
-| Versi kontrak | v1 — 0.4 (Draft) |
+| Versi kontrak | v1 — 0.5 (Draft) |
 | Tanggal | 10 Oktober 2026 |
-| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.3), `database.dbml` (v0.3) |
+| Dokumen terkait | `PRD.md` (v0.5), `ARCHITECTURE.md` (v0.4), `database.dbml` (v0.3) |
 | Sumber turunan | `api/openapi.yaml` dibuat dari dokumen ini |
 
 ---
@@ -139,7 +139,7 @@
 ### 1.7 Autentikasi & otorisasi
 
 - **Access token**: JWT, berlaku 15 menit. Claim: `sub` (user_id), `sid` (session_id), `pv` (perm_version), `iat`, `exp`.
-- **Refresh token**: string opaque, berlaku 30 hari, **dirotasi** setiap dipakai. Pemakaian ulang refresh token lama → seluruh sesi terkait dicabut.
+- **Refresh token**: string opaque, berlaku 30 hari, **dirotasi** setiap dipakai. Pemakaian ulang refresh token lama (sudah dirotasi) → sesi pemilik token itu dicabut, sehingga token terbarunya ikut tidak berlaku.
 - **Permission**: endpoint admin mencantumkan permission yang dibutuhkan. Tanpa permission → `403 PERMISSION_DENIED`.
 - **★ Sensitif**: wajib `X-Step-Up-Token` (berlaku 5 menit, hanya untuk user yang sama). Tanpa token → `403 STEP_UP_REQUIRED`.
 - **Ownership**: endpoint `/me/**` hanya mengembalikan data milik pemanggil; data milik orang lain → `404 NOT_FOUND`.
@@ -410,6 +410,15 @@ Publik. Data pribadi disamarkan. Untuk melihat SN/kode voucher lengkap, pembeli 
 | POST | `/auth/2fa/enable` | Aktifkan 2FA dengan kode pertama; kembalikan recovery codes |
 | POST | `/auth/2fa/disable` ★ | Matikan 2FA |
 | POST | `/auth/step-up` | Verifikasi TOTP → `step_up_token` |
+
+### 4.0 Aturan umum endpoint auth publik
+
+- **Captcha**: `register`, `resend-verification`, `login`, dan `forgot-password` wajib `X-Captcha-Token`. Tanpa token atau token ditolak → `422 VALIDATION_ERROR` dengan `details[].field = "X-Captcha-Token"` dan `code` `captcha_required` / `captcha_invalid`. Bila layanan captcha tidak dapat dihubungi → `503 SERVICE_UNAVAILABLE` (gagal tertutup).
+- **Rate limit per IP** (per menit): `register` 5, `login` 10, `resend-verification` 5, `forgot-password` 5, `verify-email` 10, `reset-password` 10, `refresh` 30. Tambahan per email: `login` 10 percobaan / 15 menit (`429 RATE_LIMITED`); `resend-verification` dan `forgot-password` 3 permintaan / jam (kelebihannya tetap dibalas `200` tetapi tidak mengirim email).
+- **Anti-enumerasi**: `resend-verification` dan `forgot-password` selalu `200 { "success": true, "data": null }`, apa pun status emailnya. Login dengan email tidak dikenal dan password salah mengembalikan `401 INVALID_CREDENTIALS` yang sama.
+- **Token sekali pakai**: token verifikasi email (24 jam) dan reset password (1 jam) hanya disimpan sebagai hash. Token yang salah, kedaluwarsa, atau sudah dipakai → `422 VALIDATION_ERROR` dengan `details[].field = "token"`. Reset password berhasil mencabut seluruh sesi user.
+- **Email**: dikirim modul `notification` setelah event `email_verification.requested` / `password_reset.requested` (ARCHITECTURE §2.5); endpoint tidak menunggu pengiriman.
+- **Sementara**: login user yang `two_factor_enabled` atau ber-role internal belum dapat diselesaikan sebelum alur 2FA (§4, `/auth/login/2fa`, `/auth/2fa/*`) selesai; endpoint login menjawab `503 SERVICE_UNAVAILABLE` (gagal tertutup) alih-alih menerbitkan token penuh.
 
 ### 4.1 `POST /auth/register`
 ```json
@@ -996,3 +1005,4 @@ Assign role `reseller` otomatis mengubah tier ke `RESELLER_SILVER` (bila belum b
 | 0.2 | 2026-10-10 | Nama aplikasi RaCash; prefix invoice `RC-` |
 | 0.3 | 2026-10-10 | Endpoint media (§8.10) & `*_media_id`; refund `MANUAL`; callback secret reseller; `fee_customer_share` & `expiry_minutes`; prioritas provider global (hapus `priority` per mapping); `EMAIL_NOT_VERIFIED` & wajib 2FA internal saat login; contoh vendor Xendit/Digiflazz; CRUD banner admin; `openapi.yaml` pertama dibuat |
 | 0.4 | 2026-10-10 | `/metrics` dipindah ke port internal `METRICS_ADDR` |
+| 0.5 | 2026-10-12 | Auth (§4): format error captcha, batas rate limit per endpoint, respons endpoint tanpa data, perilaku anti-enumerasi, event `email_verification.requested` & `password_reset.requested`, batas sementara 2FA |

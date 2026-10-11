@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: RaCash API
-  version: 0.4.0
+  version: 0.5.0
   summary: Website top-up multi provider & multi payment gateway
   description: |
-    Dihasilkan dari `API_CONTRACT.md` v0.4. Bila berbeda, `API_CONTRACT.md` yang berlaku
+    Dihasilkan dari `API_CONTRACT.md` v0.5. Bila berbeda, `API_CONTRACT.md` yang berlaku
     dan file ini wajib diperbarui.
 
     Konvensi:
@@ -300,6 +300,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/auth/verify-email:
     post:
@@ -334,7 +335,9 @@ paths:
                 email: { type: string, format: email }
       responses:
         '200': { $ref: '#/components/responses/Ok' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/auth/login:
     post:
@@ -344,6 +347,8 @@ paths:
         - `403 EMAIL_NOT_VERIFIED` bila email belum diverifikasi.
         - `two_factor_required: true` → lanjut ke `/auth/login/2fa`.
         - `two_factor_setup_required: true` → user internal belum mengaktifkan 2FA; token hanya bisa mengakses `/auth/2fa/*`.
+        - Sementara alur 2FA belum ada: user ber-2FA atau ber-role internal mendapat `503 SERVICE_UNAVAILABLE` (gagal tertutup).
+        - `422 VALIDATION_ERROR` bila captcha kosong/ditolak (`details[].field = X-Captcha-Token`).
       parameters: [ { $ref: '#/components/parameters/CaptchaToken' } ]
       requestBody:
         required: true
@@ -363,7 +368,9 @@ paths:
                       data: { $ref: '#/components/schemas/LoginResult' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/auth/login/2fa:
     post:
@@ -396,7 +403,7 @@ paths:
     post:
       tags: [Auth]
       operationId: refreshToken
-      description: Refresh token dirotasi; pemakaian ulang token lama mencabut seluruh sesi terkait.
+      description: Refresh token dirotasi; pemakaian ulang token lama mencabut sesi pemilik token itu.
       requestBody:
         required: true
         content:
@@ -453,7 +460,9 @@ paths:
                 email: { type: string, format: email }
       responses:
         '200': { $ref: '#/components/responses/Ok' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/auth/reset-password:
     post:
@@ -3370,6 +3379,9 @@ components:
         Retry-After: { schema: { type: integer } }
         X-RateLimit-Limit: { schema: { type: integer } }
         X-RateLimit-Remaining: { schema: { type: integer } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    ServiceUnavailable:
+      description: '`SERVICE_UNAVAILABLE`'
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     UpstreamError:
       description: '`UPSTREAM_ERROR` — provider/PG gagal merespons'
