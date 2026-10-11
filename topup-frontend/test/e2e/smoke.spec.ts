@@ -12,7 +12,7 @@ test('beranda tampil dengan tombol Masuk', async ({ page }) => {
 test('/account tanpa login diarahkan ke /login dengan redirect', async ({ page }) => {
   await page.goto('/account')
   await expect(page).toHaveURL(u => u.pathname === '/login' && u.searchParams.get('redirect') === '/account')
-  await expect(page.getByRole('heading', { name: 'Masuk' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Selamat datang lagi' })).toBeVisible()
 })
 
 test('form login memvalidasi input di client', async ({ page }) => {

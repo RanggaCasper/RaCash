@@ -17,6 +17,8 @@ export default defineNuxtConfig({
       siteLegalName: 'PT RaCash Digital Indonesia',
       // Nomor WhatsApp CS (internasional tanpa +). Kosong = tombol bantuan disembunyikan.
       supportWhatsapp: '',
+      // Site key Cloudflare Turnstile (captcha form auth). Kosong = tanpa widget (lokal).
+      turnstileSiteKey: '',
     },
   },
 
