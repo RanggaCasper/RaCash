@@ -1,0 +1,11 @@
+# TLS otomatis. Atur WEB_DOMAIN / API_DOMAIN di .env root. Lokal: localhost, api.localhost.
+{$WEB_DOMAIN:localhost} {
+	encode zstd gzip
+	reverse_proxy nuxt:3000
+}
+
+# Port metrics (:9090) sengaja tidak diproksi; hanya jaringan internal.
+{$API_DOMAIN:api.localhost} {
+	encode zstd gzip
+	reverse_proxy api:8080
+}
