@@ -23,7 +23,7 @@ function cookieBase(event: H3Event) {
     httpOnly: true,
     secure: Boolean(useRuntimeConfig(event).cookieSecure),
     sameSite: 'lax' as const,
-    // path "/" (bukan /api/auth) agar SSR halaman /akun & proxy /api/** bisa
+    // path "/" (bukan /api/auth) agar SSR halaman /account & proxy /api/** bisa
     // me-refresh access token yang kedaluwarsa secara transparan.
     path: '/',
   }

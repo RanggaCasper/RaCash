@@ -27,7 +27,7 @@ npm run dev                  # http://localhost:3000
 app/                  app.vue, error.vue
 layers/core           UI kit, Pinia store, useApi/useAuth/useCan/useMoney, middleware, v-can, util
 layers/storefront     halaman publik (beranda, brand, checkout, invoice, lacak)
-layers/account        /masuk, /akun/**
+layers/account        /login, /account/**
 layers/admin          /admin/** (SPA, ssr: false)
 server/               BFF: api/auth/*, api/[...path].ts (proxy), middleware/csrf.ts, utils/session.ts
 shared/types          api.d.ts (generated) + schema.ts (helper Schema<'Me'>)

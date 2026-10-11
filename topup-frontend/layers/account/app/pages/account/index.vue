@@ -19,6 +19,6 @@ const { user } = useAuth()
         <UiMoney :amount="user?.balance" />
       </p>
     </UCard>
-    <UButton to="/akun/keamanan" class="mt-6" variant="outline" icon="i-lucide-shield-check" label="Keamanan akun" />
+    <UButton :to="SECURITY_PATH" class="mt-6" variant="outline" icon="i-lucide-shield-check" label="Keamanan akun" />
   </UContainer>
 </template>

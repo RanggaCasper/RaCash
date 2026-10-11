@@ -8,7 +8,7 @@ export const useAuthStore = defineStore('auth', () => {
   const loaded = ref(false)
   /**
    * Login berhasil tetapi token terbatas: staf internal wajib mengaktifkan 2FA dulu
-   * (API_CONTRACT §4.7). Profil belum bisa dimuat; hanya /akun/keamanan yang boleh dibuka.
+   * (API_CONTRACT §4.7). Profil belum bisa dimuat; hanya /account/security yang boleh dibuka.
    */
   const setupRequired = ref(false)
 
