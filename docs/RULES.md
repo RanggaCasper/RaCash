@@ -106,7 +106,7 @@ Kata **WAJIB** / **DILARANG** bersifat mengikat; pelanggaran harus diperbaiki se
 6. Breaking change hanya lewat versi path baru (`/v2`). Menambah field tidak dianggap breaking.
 7. Respons API **WAJIB** divalidasi terhadap `openapi.yaml` di test API.
 
-## 6. Frontend (Nuxt 4.6.0)
+## 6. Frontend (Nuxt 4.6.1)
 
 1. Browser **DILARANG** memegang access/refresh token. Semua panggilan lewat BFF Nitro (`/api/**`) dengan cookie httpOnly.
 2. Tipe API **WAJIB** di-generate dari `openapi.yaml` ke `shared/types/api.d.ts`. **DILARANG** menulis tipe respons API secara manual.

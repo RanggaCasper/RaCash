@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* Pindai kelas Tailwind di semua layer dan app root. */
+@source "../../../../";
+@source "../../../../../app";

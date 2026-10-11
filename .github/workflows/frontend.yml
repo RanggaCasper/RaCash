@@ -1,0 +1,35 @@
+name: frontend
+
+on:
+  push:
+    branches: [main]
+    paths: ['topup-frontend/**', 'docs/openapi.yaml', '.github/workflows/frontend.yml']
+  pull_request:
+    paths: ['topup-frontend/**', 'docs/openapi.yaml', '.github/workflows/frontend.yml']
+
+defaults:
+  run:
+    working-directory: topup-frontend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: topup-frontend/package-lock.json
+      - run: npm ci
+      - name: Tipe API sinkron dengan openapi.yaml
+        run: npm run gen:api && git diff --exit-code shared/types/api.d.ts
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: BFF end-to-end
+        run: npm run test:bff
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: E2E (Playwright)
+        run: npm run test:e2e

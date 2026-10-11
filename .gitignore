@@ -1,0 +1,4 @@
+# Rahasia lokal tidak boleh ter-commit dari folder mana pun.
+.env
+.env.*
+!.env.example
